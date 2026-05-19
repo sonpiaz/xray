@@ -15,8 +15,24 @@ export const NotableReplySchema = z.object({
 });
 export type NotableReply = z.infer<typeof NotableReplySchema>;
 
+/**
+ * P1.0: coverage metadata describing how much of the conversation we walked.
+ * Added as an optional field on ResearchReport so Phase 0 outputs remain valid.
+ */
+export const ThreadCoverageSchema = z.object({
+  targetDepth: z.number().int(),
+  achievedDepth: z.number().int(),
+  targetReplies: z.number().int(),
+  fetchedReplies: z.number().int(),
+  classifiedReplies: z.number().int().default(0),
+  paginationCursors: z.array(z.string()).default([]),
+  status: z.enum(['ok', 'partial', 'failed']).default('ok'),
+  failureReason: z.string().optional(),
+});
+export type ThreadCoverage = z.infer<typeof ThreadCoverageSchema>;
+
 export const ResearchReportSchema = z.object({
-  schemaVersion: z.literal(1).default(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]).default(1),
   generatedAt: z.string().datetime(),
   source: z.object({
     url: z.string().url(),
@@ -31,5 +47,6 @@ export const ResearchReportSchema = z.object({
   notableReplies: z.array(NotableReplySchema).default([]),
   openQuestions: z.array(z.string()).default([]),
   warnings: z.array(z.string()).default([]),
+  coverage: ThreadCoverageSchema.optional(),
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;

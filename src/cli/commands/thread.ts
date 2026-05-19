@@ -11,6 +11,8 @@ export type ThreadCmdOptions = {
   noCache?: boolean;
   raw?: boolean;
   mode?: string;
+  depth?: number | string;
+  maxReplies?: number | string;
 };
 
 export async function threadCommand(url: string, opts: ThreadCmdOptions): Promise<void> {
@@ -22,6 +24,20 @@ export async function threadCommand(url: string, opts: ThreadCmdOptions): Promis
       throw new Error(`Invalid --mode: ${opts.mode}. Use auto|anon|auth.`);
     }
     research_opts.mode = opts.mode as FetchMode;
+  }
+  if (opts.depth !== undefined) {
+    const n = Number(opts.depth);
+    if (!Number.isInteger(n) || n < 1 || n > 10) {
+      throw new Error(`Invalid --depth: ${opts.depth}. Expected integer in [1, 10].`);
+    }
+    research_opts.depth = n;
+  }
+  if (opts.maxReplies !== undefined) {
+    const n = Number(opts.maxReplies);
+    if (!Number.isInteger(n) || n < 1 || n > 200) {
+      throw new Error(`Invalid --max-replies: ${opts.maxReplies}. Expected integer in [1, 200].`);
+    }
+    research_opts.maxReplies = n;
   }
 
   try {

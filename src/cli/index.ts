@@ -18,6 +18,8 @@ export async function runCli(argv: string[]): Promise<number> {
     .option('--no-cache', 'Skip the local cache for the fetch')
     .option('--raw', 'Skip LLM analysis; emit thread structure only')
     .option('--mode <mode>', 'Fetch mode: auto | anon | auth', { default: 'auto' })
+    .option('--depth <n>', 'Max reply nesting depth to walk (default 3)')
+    .option('--max-replies <n>', 'Max top-level replies to fetch (default 50)')
     .action(async (url: string, opts: Parameters<typeof threadCommand>[1]) => {
       await threadCommand(url, opts);
     });

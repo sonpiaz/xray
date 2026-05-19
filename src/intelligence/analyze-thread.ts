@@ -1,16 +1,19 @@
 import { getCachedThread } from '../cache/threads.ts';
 import { loadConfig } from '../core/config.ts';
 import { logger } from '../core/logger.ts';
-import { type FetchMode, fetchThread } from '../fetcher/thread.ts';
+import { type FetchMode, type FetchOptions, fetchThread } from '../fetcher/thread.ts';
 import { parseXUrl } from '../fetcher/url.ts';
 import { analyzeThread } from '../kyma/analyze.ts';
-import type { ResearchReport } from '../models/report.ts';
+import type { ResearchReport, ThreadCoverage } from '../models/report.ts';
 import type { XThread } from '../models/thread.ts';
 
 export type ResearchOptions = {
   mode?: FetchMode;
   noCache?: boolean;
   skipAnalysis?: boolean;
+  // P1.0 additions
+  depth?: number;
+  maxReplies?: number;
 };
 
 export async function research(url: string, opts: ResearchOptions = {}): Promise<ResearchReport> {
@@ -18,6 +21,7 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
   const parsed = parseXUrl(url);
 
   let thread: XThread | undefined;
+  let coverage: ThreadCoverage | undefined;
   let cacheHit = false;
   if (!opts.noCache) {
     thread = getCachedThread(parsed.id);
@@ -27,9 +31,36 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     }
   }
   if (!thread) {
-    const fetchOpts: { mode?: FetchMode } = {};
+    const fetchOpts: FetchOptions = {};
     if (opts.mode !== undefined) fetchOpts.mode = opts.mode;
-    thread = await fetchThread(parsed.canonical, fetchOpts);
+    if (opts.depth !== undefined) fetchOpts.depth = opts.depth;
+    if (opts.maxReplies !== undefined) fetchOpts.maxReplies = opts.maxReplies;
+    const result = await fetchThread(parsed.canonical, fetchOpts);
+    thread = result.thread;
+    if (result.coverage) {
+      coverage = {
+        targetDepth: result.coverage.targetDepth,
+        achievedDepth: result.coverage.achievedDepth,
+        targetReplies: result.coverage.targetReplies,
+        fetchedReplies: result.coverage.fetchedReplies,
+        classifiedReplies: 0,
+        paginationCursors: result.coverage.paginationCursors,
+        status: result.coverage.status,
+        ...(result.coverage.failureReason !== undefined
+          ? { failureReason: result.coverage.failureReason }
+          : {}),
+      };
+    }
+  }
+
+  const partialWarnings: string[] = [];
+  if (thread.partial && thread.partialReason) {
+    partialWarnings.push(`Partial: ${thread.partialReason}`);
+  }
+  if (coverage && coverage.status === 'partial') {
+    partialWarnings.push(
+      `Partial: fetched ${coverage.fetchedReplies}/${coverage.targetReplies} target replies (depth ${coverage.achievedDepth}/${coverage.targetDepth})`,
+    );
   }
 
   if (opts.skipAnalysis || !cfg.kyma.key) {
@@ -43,9 +74,11 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
       keyInsights: [],
       notableReplies: [],
       openQuestions: [],
-      warnings: cfg.kyma.key
-        ? []
-        : ['KYMA_API_KEY not set — returning raw thread without analysis.'],
+      warnings: [
+        ...partialWarnings,
+        ...(cfg.kyma.key ? [] : ['KYMA_API_KEY not set — returning raw thread without analysis.']),
+      ],
+      ...(coverage ? { coverage } : {}),
     };
   }
 
@@ -62,6 +95,7 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     keyInsights: analysis.keyInsights,
     notableReplies: analysis.notableReplies,
     openQuestions: analysis.openQuestions,
-    warnings: thread.partial && thread.partialReason ? [`Partial: ${thread.partialReason}`] : [],
+    warnings: partialWarnings,
+    ...(coverage ? { coverage } : {}),
   };
 }

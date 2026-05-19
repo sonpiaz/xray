@@ -174,6 +174,27 @@ export type ParsedDetail = {
 };
 
 /**
+ * A ShowMore cursor (a.k.a. "Show replies") that hangs off a particular parent
+ * comment in a nested conversation module. P1.0 pagination uses these to walk
+ * deeper into the reply tree.
+ */
+export type NestedShowMoreCursor = {
+  /** The cursor token to pass back to TweetDetail. */
+  value: string;
+  /** The post id this cursor is "anchored under" (last tweet in the module before the cursor item), if we can identify one. */
+  parentPostId?: string;
+  /** Module-level depth hint: 1 for first-level nested replies, 2 for replies-to-replies, etc. */
+  depth: number;
+};
+
+export type ExtractedCursors = {
+  /** Bottom cursor for paginating top-level replies. */
+  bottom?: string;
+  /** ShowMore cursors discovered inside conversation modules. */
+  showMore: NestedShowMoreCursor[];
+};
+
+/**
  * Walk a TweetDetail GraphQL response and extract:
  *   - rootPost: the OP
  *   - authorPosts: subsequent posts in the conversation by the SAME author (thread)
@@ -214,21 +235,99 @@ export function parseTweetDetail(payload: unknown, rootId: string): ParsedDetail
       continue;
     }
 
-    // TimelineTimelineModule (conversation thread by same author)
+    // TimelineTimelineModule — may be:
+    //   (a) the OP's own follow-up thread (author posts);
+    //   (b) a "VerticalConversation" of nested replies, where items[i] sit at increasing depth.
+    // We let addTweet() figure out per-tweet routing; depth is the item's position
+    // within the module (0 = top-of-module reply, 1 = reply-to-reply, ...).
     const items = arr(content.items);
     if (items) {
+      let posIdx = 0;
       for (const it of items) {
         const io = obj(it);
         const ic = obj(io?.item);
         const itc = obj(ic?.itemContent);
-        if (itc && itc.itemType === 'TimelineTweet') {
-          addTweet(itc, result, rootId, seen, 0);
+        if (!itc) continue;
+        if (itc.itemType === 'TimelineTweet') {
+          addTweet(itc, result, rootId, seen, posIdx);
+          posIdx += 1;
         }
       }
     }
   }
 
   return result;
+}
+
+/**
+ * Walk a TweetDetail payload and collect pagination cursors:
+ *   - the "Bottom" cursor (next page of top-level replies);
+ *   - any "ShowMore" / "ShowMoreThreads" / "ShowMoreThreadsPrompt" cursors in
+ *     conversation modules (used to walk nested reply subtrees).
+ *
+ * X has used several cursorType values over time; we accept any cursorType that
+ * starts with "ShowMore" as a nested expansion cursor.
+ */
+export function extractCursors(payload: unknown): ExtractedCursors {
+  const out: ExtractedCursors = { showMore: [] };
+  const instructions = findInstructions(payload);
+  if (!instructions) return out;
+
+  for (const ins of instructions) {
+    const i = obj(ins);
+    if (!i) continue;
+    if (i.type !== 'TimelineAddEntries' && i.type !== 'TimelineAddToModule') continue;
+    const entries = arr(i.entries) ?? arr(i.moduleItems) ?? [];
+
+    for (const entry of entries) {
+      const eo = obj(entry);
+      if (!eo) continue;
+      const content = obj(eo.content) ?? obj(eo.item);
+      if (!content) continue;
+
+      // Top-level cursor entry.
+      const ctype = str(content.cursorType);
+      const cvalue = str(content.value);
+      if (ctype && cvalue) {
+        if (ctype === 'Bottom') {
+          out.bottom = cvalue;
+        } else if (ctype.startsWith('ShowMore')) {
+          out.showMore.push({ value: cvalue, depth: 1 });
+        }
+        continue;
+      }
+
+      // Cursor nested inside a module's items[].
+      const items = arr(content.items);
+      if (!items) continue;
+      let lastTweetId: string | undefined;
+      let depthHint = 1;
+      for (const it of items) {
+        const io = obj(it);
+        const ic = obj(io?.item);
+        const itc = obj(ic?.itemContent);
+        if (!itc) continue;
+        if (itc.itemType === 'TimelineTweet') {
+          const tweetResults = obj(itc.tweet_results);
+          const tweet = unwrapTweetResult(tweetResults?.result);
+          const id = str(tweet?.rest_id) ?? str(obj(tweet?.legacy)?.id_str);
+          if (id) {
+            lastTweetId = id;
+            depthHint += 1; // each tweet under a parent deepens the module
+          }
+        } else if (itc.itemType === 'TimelineTimelineCursor') {
+          const cType = str(itc.cursorType) ?? str(itc.type);
+          const cVal = str(itc.value);
+          if (cType && cVal && cType.startsWith('ShowMore')) {
+            const cursor: NestedShowMoreCursor = { value: cVal, depth: depthHint };
+            if (lastTweetId !== undefined) cursor.parentPostId = lastTweetId;
+            out.showMore.push(cursor);
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function addTweet(

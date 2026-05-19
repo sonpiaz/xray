@@ -18,6 +18,20 @@ const ThreadInput = {
     .describe('Fetch mode. Default: auto (anonymous → cookies fallback).'),
   noCache: z.boolean().optional().describe('Skip cache for the fetch step.'),
   raw: z.boolean().optional().describe('Skip LLM analysis; return raw thread only.'),
+  depth: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe('Max reply nesting depth to walk. Default: 3.'),
+  maxReplies: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('Max top-level replies to fetch. Default: 50.'),
   format: z
     .enum(['markdown', 'json', 'both'])
     .optional()
@@ -41,6 +55,8 @@ export async function startMcpServer(): Promise<void> {
         if (args.mode) opts.mode = args.mode;
         if (args.noCache) opts.noCache = true;
         if (args.raw) opts.skipAnalysis = true;
+        if (args.depth !== undefined) opts.depth = args.depth;
+        if (args.maxReplies !== undefined) opts.maxReplies = args.maxReplies;
 
         const report = await research(args.url, opts);
         const format = args.format ?? 'markdown';
