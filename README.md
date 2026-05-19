@@ -30,7 +30,7 @@ xray thread https://x.com/karpathy/status/1234567890
 
 ## Status
 
-**v0.3.0 — Phase 2 (Video understanding).** Full transcript + frame analysis + structured synthesis for X-native, YouTube, TikTok, Vimeo, and LinkedIn videos. See [CHANGELOG.md](./CHANGELOG.md) for full history.
+**v0.4.0 — Phase 3 (External content understanding).** XRay now reads articles linked from threads + cross-references tweet claims to article passages. See [CHANGELOG.md](./CHANGELOG.md) for full history.
 
 | Phase | What it adds | Status |
 |---|---|---|
@@ -38,9 +38,18 @@ xray thread https://x.com/karpathy/status/1234567890
 | 1 | Deep reply trees + classification + `--deep` synthesis | Done (v0.2.0) |
 | 1.5 | Invisible 3-tier auth (cookie → SSR → saved auth) + `--mode` overrides + `xray auth --status` | Done (v0.2.0) |
 | 2 | Video understanding (transcript + scene-detect frames + synthesis) | Done (v0.3.0) |
-| 3 | External article cross-reference | Planned |
+| 3 | External content (X Articles + external links + cross-reference) | Done (v0.4.0) |
 | 4 | Semantic search + narrative tracking | Planned |
 | 5 | Polish + OSS readiness | Planned |
+
+**v0.4.0 highlights:**
+
+- Opt-in `--articles` flag on `xray thread`; standalone `xray article <url>` + `xray_article` MCP tool.
+- 3-tier fetch: undici + cheerio meta → Mozilla Readability → Playwright SPA fallback (handles SPAs like Notion / dev.to).
+- Cross-reference attribution: maps tweet claims to article passages with `supports` / `extends` / `contradicts` / `unrelated` + confidence.
+- Paywall detection (`partial: true`) + URL canonicalization (tracking params stripped, `t.co` resolved).
+- Capped at 5 articles per thread; cost surfaced via `estimatedCostUsd`.
+- See [CHANGELOG.md](./CHANGELOG.md) for the full v0.4.0 entry.
 
 **v0.3.0 highlights:**
 
@@ -111,6 +120,17 @@ bun run xray video https://x.com/user/status/123 --raw   # transcript + frames, 
 # embed video analysis inside a thread report
 bun run xray thread https://x.com/karpathy/status/1234567890 --video
 
+# analyze a linked article (X Article, Substack, Medium, dev.to, any HTML)
+bun run xray article https://some-substack.com/p/some-post
+bun run xray article https://x.com/user/status/123  # tweet URL hosting an X Article
+bun run xray article https://some-blog.com/post --raw  # body only, skip summary
+
+# embed article analysis (+ cross-reference) inside a thread report
+bun run xray thread https://x.com/karpathy/status/1234567890 --articles
+
+# both video AND articles in one thread call
+bun run xray thread https://x.com/karpathy/status/1234567890 --video --articles
+
 # cache controls (now includes video cache stats)
 bun run xray cache info
 bun run xray cache clear
@@ -146,10 +166,11 @@ Add to your MCP config:
 }
 ```
 
-The agent gets two tools:
+The agent gets three tools:
 
-- `xray_thread({ url, video?, ... })` → `ResearchReport` (with optional embedded `videoAnalysis[]` when `video: true`).
+- `xray_thread({ url, video?, articles?, ... })` → `ResearchReport` (with optional embedded `videoAnalysis[]` when `video: true`, and `articleSummaries[]` when `articles: true`).
 - `xray_video({ url, raw?, format? })` → `VideoReport` (standalone video analysis).
+- `xray_article({ url, tweetContext?, synthesize?, format? })` → `ArticleSummary` (standalone article analysis; defaults `synthesize: true`, opposite of `xray_video`).
 
 ---
 

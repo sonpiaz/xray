@@ -4,6 +4,24 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-05-19
+
+### Added
+- **External content understanding (Phase 3).** Opt-in `--articles` flag on `xray thread` + new standalone `xray article <url>` + `xray_article` MCP tool. Fetches X Articles (native long-form) AND external HTML (Substack, Medium, dev.to, GitHub, generic blogs) via 3-tier fetch (undici + cheerio meta → Mozilla Readability → Playwright SPA fallback).
+- **Cross-reference attribution.** When called from a thread context, maps tweet claims to specific article passages with relationship (`supports` | `extends` | `contradicts` | `unrelated`) and confidence (0-1). Cached separately per `(url_canonical, tweet_context_hash)` so the same article cross-referenced against two different threads gets two distinct cache rows.
+- **Paywall detection** with `partial: true` + clear errors so callers know coverage is limited.
+- **URL canonicalization** — strips tracking params (`utm_*`, `fbclid`, etc.), resolves `t.co` shorteners, sorts query params for stable cache keys.
+- **`ResearchReport.articleSummaries[]`** optional field — populated when `--articles` runs and at least one article is detected. Capped at 5 articles per thread (defensive cost cap, mirrors the 3-video cap pattern).
+- **Markdown article section** embedded into `xray thread` output (and full standalone document for `xray article`). Renders title, author/published/word-count meta, summary, key points, cross-reference table (top 8 by confidence). Long bodies (>20k chars) ship a clipped excerpt block.
+- **`xray_article` MCP tool** with input shape `{ url, noCache?, tweetContext?, tweetPostId?, model?, synthesize?, format? }`. Defaults `synthesize=true` (opposite of `xray_video`) because article summaries are surfaced to humans more often than raw video transcripts; agents can opt out.
+- **`articles` arg on `xray_thread` MCP tool** — boolean, defaults false. Independent and composable with `video` and `deep`.
+
+### Changed
+- `package.json`, CLI, and MCP server version bumped to `0.4.0`.
+
+### Dependencies (new)
+- `@mozilla/readability` + `linkedom` for HTML article extraction. Both pure JS, no native binaries.
+
 ## [0.3.1] — 2026-05-19
 
 ### Fixed
