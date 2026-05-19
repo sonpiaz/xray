@@ -6,7 +6,7 @@ import { cacheClearCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { threadCommand } from './commands/thread.ts';
 
-const VERSION = '0.0.1';
+const VERSION = '0.2.0';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');
@@ -29,9 +29,16 @@ export async function runCli(argv: string[]): Promise<number> {
       await threadCommand(url, opts);
     });
 
-  cli.command('auth', 'Log in to X interactively and save session cookies').action(async () => {
-    await authCommand();
-  });
+  cli
+    .command('auth', 'Log in to X interactively, or inspect available auth sources')
+    .option(
+      '--status',
+      'Print detected cookie sources + storageState presence; never prompts Keychain',
+    )
+    .action(async (opts: { status?: boolean }) => {
+      const code = await authCommand({ status: opts.status });
+      if (code !== 0) process.exit(code);
+    });
 
   cli
     .command('cache [action]', 'Cache controls (action: info | clear)')
