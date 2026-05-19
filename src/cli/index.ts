@@ -5,11 +5,12 @@ import { articleCommand } from './commands/article.ts';
 import { authCommand } from './commands/auth.ts';
 import { cacheClearCommand, cacheEmbedCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
+import { profileCommand } from './commands/profile.ts';
 import { searchCommand } from './commands/search.ts';
 import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');
@@ -80,6 +81,20 @@ export async function runCli(argv: string[]): Promise<number> {
     });
 
   cli
+    .command('profile <handle>', 'Build a profile from cached threads for an X handle')
+    .option('--json', 'Output JSON instead of Markdown')
+    .option('-o, --output <path>', 'Write output to a file')
+    .option('--no-cache', 'Skip profile_cache; force re-synthesis')
+    .option(
+      '--fresh <n>',
+      'Fetch N recent tweets first (P5+, currently logs warning and falls back to cache)',
+    )
+    .option('--model <name>', 'Override Kyma synthesis model')
+    .action(async (handle: string, opts: Parameters<typeof profileCommand>[1]) => {
+      await profileCommand(handle, opts);
+    });
+
+  cli
     .command('auth', 'Log in to X interactively, or inspect available auth sources')
     .option(
       '--status',
@@ -96,9 +111,13 @@ export async function runCli(argv: string[]): Promise<number> {
       '--no-resume',
       'For `embed`: force a full re-embed even when content_hash is unchanged.',
     )
-    .action(async (action: string | undefined, opts: { resume?: boolean }) => {
+    .option(
+      '--profiles',
+      'For `clear`: clear only profile_cache (preserves posts/threads/embeddings)',
+    )
+    .action(async (action: string | undefined, opts: { resume?: boolean; profiles?: boolean }) => {
       const a = (action ?? 'info').toLowerCase();
-      if (a === 'clear') return cacheClearCommand();
+      if (a === 'clear') return cacheClearCommand({ profilesOnly: opts.profiles });
       if (a === 'info') return cacheInfoCommand();
       // cac parses --no-resume into { resume: false }; pass through.
       if (a === 'embed') return cacheEmbedCommand({ resume: opts.resume });
