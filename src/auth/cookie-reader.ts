@@ -156,10 +156,37 @@ export function decryptValue(encrypted: Buffer, key: Buffer): string {
     // exactly per spec.
     decipher.setAutoPadding(true);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    return plaintext.toString('utf8');
+    return stripChromeMacPrefix(plaintext);
   } catch (err) {
     throw new CookieDecryptError('AES-128-CBC decrypt failed', { cause: err });
   }
+}
+
+/**
+ * Chrome 113+ (`kCookieEncryptionFeature`) prepends a 32-byte SHA-256 of the
+ * host_key to the cookie value before AES encryption, as a defence against
+ * cookie-value swaps across domains. After decryption the bytes are still
+ * there and they look like binary noise to anything downstream.
+ *
+ * We detect the prefix heuristically: real X cookie values are pure printable
+ * ASCII (hex, base64, URL-encoded), so if the first 32 bytes contain ANY byte
+ * outside printable ASCII range (0x20-0x7E), they are the MAC and we strip
+ * them. Older Chromes without the feature produce pure-ASCII plaintext from
+ * the very first byte, and this check is a no-op.
+ *
+ * Discovered during the first live live `xray thread` against real macOS
+ * Chrome cookies on 2026-05-19.
+ */
+function stripChromeMacPrefix(plaintext: Buffer): string {
+  if (plaintext.length <= 32) return plaintext.toString('utf8');
+  const head = plaintext.subarray(0, 32);
+  for (let i = 0; i < head.length; i++) {
+    const b = head[i]!;
+    if (b < 0x20 || b > 0x7e) {
+      return plaintext.subarray(32).toString('utf8');
+    }
+  }
+  return plaintext.toString('utf8');
 }
 
 /**
@@ -308,6 +335,29 @@ export const defaultKeychainFetcher: KeychainFetcher = (service) => {
  * this function, the pure helpers above (`decryptValue`, `mapRowsToCookies`,
  * etc.) can be tested under Node without triggering the import.
  */
+/**
+ * `bun:sqlite` returns BLOB columns as JavaScript strings (each byte mapped to
+ * a UTF-16 code unit via latin1/binary encoding) rather than `Uint8Array` /
+ * `Buffer`. The raw bytes survive the round-trip, but the `Buffer.isBuffer`
+ * check in `decryptValue` would reject the string and report "empty buffer".
+ * Convert here once so the rest of the pipeline can stay buffer-typed.
+ *
+ * Discovered during the first live `xray thread` run against real Chrome
+ * cookies on 2026-05-19 — 258 raw rows / 0 decrypted before this fix.
+ */
+function normalizeRow(row: ChromiumCookieRow): ChromiumCookieRow {
+  const ev = row.encrypted_value as unknown;
+  if (Buffer.isBuffer(ev)) return row;
+  if (ev instanceof Uint8Array) {
+    return { ...row, encrypted_value: Buffer.from(ev) };
+  }
+  if (typeof ev === 'string') {
+    return { ...row, encrypted_value: Buffer.from(ev, 'binary') };
+  }
+  // null / undefined → empty buffer; mapRowsToCookies skips empty rows.
+  return { ...row, encrypted_value: Buffer.alloc(0) };
+}
+
 async function openCookiesDbReadonly(
   dbPath: string,
 ): Promise<{ rows: ChromiumCookieRow[]; close: () => void }> {
@@ -320,7 +370,7 @@ async function openCookiesDbReadonly(
   let tempCopyDir: string | undefined;
   try {
     const db = new Database(openPath, { readonly: true });
-    const rows = db.query(HOST_FILTER_SQL).all() as ChromiumCookieRow[];
+    const rows = (db.query(HOST_FILTER_SQL).all() as ChromiumCookieRow[]).map(normalizeRow);
     return {
       rows,
       close: () => {
@@ -348,7 +398,7 @@ async function openCookiesDbReadonly(
     }
     openPath = copiedPath;
     const db = new Database(openPath, { readonly: true });
-    const rows = db.query(HOST_FILTER_SQL).all() as ChromiumCookieRow[];
+    const rows = (db.query(HOST_FILTER_SQL).all() as ChromiumCookieRow[]).map(normalizeRow);
     return {
       rows,
       close: () => {

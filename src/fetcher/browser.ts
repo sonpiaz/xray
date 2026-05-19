@@ -11,11 +11,19 @@ let browser: Browser | undefined;
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15';
 
+/**
+ * The fetch browser singleton ALWAYS launches headless. Fetch tiers (cookie
+ * inject, SSR-after-fetch, saved-auth) must be invisible per the P1.5
+ * "invisible default" principle — a visible browser window during a normal
+ * `xray thread` would violate [[feedback_invisible_auth_escalation]].
+ *
+ * The `XRAY_HEADLESS=false` env var only affects the *interactive* `xray auth`
+ * login flow, which launches its OWN one-off browser via `launchHeadedAuthBrowser`.
+ */
 export async function getBrowser(): Promise<Browser> {
   if (browser?.isConnected()) return browser;
-  const cfg = loadConfig();
   try {
-    browser = await chromium.launch({ headless: cfg.fetcher.headless });
+    browser = await chromium.launch({ headless: true });
   } catch (err) {
     throw new FetchError(
       'Failed to launch Chromium. Run `bunx playwright install chromium` first.',
@@ -23,6 +31,24 @@ export async function getBrowser(): Promise<Browser> {
     );
   }
   return browser;
+}
+
+/**
+ * Launch an isolated browser for the interactive `xray auth` login flow.
+ * NOT the singleton — caller must close it explicitly. Respects
+ * `XRAY_HEADLESS` so users can run headless logins in CI if they really
+ * want, but defaults to headed (the whole point of interactive login).
+ */
+export async function launchHeadedAuthBrowser(): Promise<Browser> {
+  const cfg = loadConfig();
+  try {
+    return await chromium.launch({ headless: cfg.fetcher.headless });
+  } catch (err) {
+    throw new FetchError(
+      'Failed to launch Chromium. Run `bunx playwright install chromium` first.',
+      { cause: err },
+    );
+  }
 }
 
 export type ContextMode = 'anon' | 'auth';
