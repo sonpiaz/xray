@@ -17,7 +17,11 @@ export async function runCli(argv: string[]): Promise<number> {
     .option('-o, --output <path>', 'Write output to a file')
     .option('--no-cache', 'Skip the local cache for the fetch')
     .option('--raw', 'Skip LLM analysis; emit thread structure only')
-    .option('--mode <mode>', 'Fetch mode: auto | anon | auth', { default: 'auto' })
+    .option(
+      '--mode <mode>',
+      'Fetch mode: auto | ssr | cookie | auth (default: auto = cookie→SSR→saved auth escalation)',
+      { default: 'auto' },
+    )
     .option('--depth <n>', 'Max reply nesting depth to walk (default 3)')
     .option('--max-replies <n>', 'Max top-level replies to fetch (default 50)')
     .option('--deep', 'Run deep analysis: per-subtree Kyma calls + synthesis (~10x cost)')

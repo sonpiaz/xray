@@ -1,11 +1,14 @@
+import { existsSync } from 'node:fs';
 import type { BrowserContext, Page, Request, Response } from 'playwright';
+import { detectChromiumBrowsers } from '../auth/browsers.ts';
+import { type DecryptedCookie, readXCookies } from '../auth/cookie-reader.ts';
 import { putCachedThread } from '../cache/threads.ts';
 import { loadConfig } from '../core/config.ts';
-import { AuthRequiredError, FetchError } from '../core/errors.ts';
+import { AuthWallError, FetchError, KeychainDeniedError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
 import type { XPost } from '../models/post.ts';
 import type { XThread } from '../models/thread.ts';
-import { newContext } from './browser.ts';
+import { newContext, newContextWithCookies } from './browser.ts';
 import { type PaginationContext, type WalkCoverage, walkReplyTree } from './pagination.ts';
 import {
   type ExtractedCursors,
@@ -13,9 +16,16 @@ import {
   extractCursors,
   parseTweetDetail,
 } from './parser.ts';
+import { fetchSsr } from './ssr.ts';
 import { type ParsedXUrl, parseXUrl } from './url.ts';
 
-export type FetchMode = 'auto' | 'anon' | 'auth';
+/**
+ * P1.5.2 — Fetch modes. `'anon'` was removed in v0.2.0 — the anonymous
+ * Playwright tier produced the same content as SSR but slower. Use `'ssr'`
+ * for an authentication-free fetch, or `'cookie'` to force the
+ * Chromium-cookie-injected Playwright path with no fallback. Spec §6.3.
+ */
+export type FetchMode = 'auto' | 'ssr' | 'cookie' | 'auth';
 
 export type FetchOptions = {
   mode?: FetchMode;
@@ -28,71 +38,265 @@ export type FetchOptions = {
 export type FetchResult = {
   thread: XThread;
   coverage?: WalkCoverage;
+  /**
+   * P1.5.2 — which escalation tier produced this result. Always set for
+   * fetches that go through `fetchThread`. Surfaces into
+   * `ResearchReport.coverage.tier` for downstream agents.
+   */
+  tier?: 'ssr' | 'cookie' | 'auth';
 };
 
+/**
+ * P1.5.2 — Test seam for the 3-tier orchestrator. The orchestrator calls
+ * every external dependency through this object so unit tests can swap in
+ * mocks without standing up the real Chromium / cookie-decrypt / SQLite
+ * stack. Production code never reassigns these.
+ *
+ * Tier-1 cookie internals (`readXCookies`, `newContextWithCookies`) and the
+ * cookie-injected fetch (`fetchWithCookies`) are all exposed so tests can
+ * stub at whatever granularity they need:
+ *   - Swap `fetchWithCookies` for end-to-end tier-selection tests.
+ *   - Swap individual primitives for per-error-path tests.
+ *
+ * `fetchWithStorageState` and `putCachedThread` are exposed for the same
+ * reason — Tier 3 needs a real Playwright launch otherwise, and the cache
+ * needs `bun:sqlite` which the Node test runner can't import.
+ *
+ * Spec §8.1 / §8.2.
+ */
+export const _orchestratorDeps = {
+  detectChromiumBrowsers,
+  readXCookies,
+  newContextWithCookies,
+  fetchSsr,
+  fetchWithCookies: (
+    parsed: ParsedXUrl,
+    cookies: DecryptedCookie[],
+    opts: FetchOptions,
+  ): Promise<FetchResult> => fetchWithCookiesImpl(parsed, cookies, opts),
+  fetchWithStorageState: (parsed: ParsedXUrl, opts: FetchOptions): Promise<FetchResult> =>
+    fetchWithStorageStateImpl(parsed, opts),
+  putCachedThread,
+};
+
+/**
+ * Default reply/depth caps, replayed here for the Tier 1/Tier 3 Playwright
+ * paths. SSR (Tier 2) ignores both — it always returns the OG card only.
+ */
+const DEFAULT_MAX_REPLIES = 50;
+const DEFAULT_DEPTH = 3;
+
+/**
+ * P1.5.2 — Top-level orchestrator.
+ *
+ * `mode === 'auto'` (default) runs the 3-tier invisible-escalation chain:
+ * Cookie+PW → SSR fallback → saved auth (PHASE_1_5_PLAN.md §4 + §8.1).
+ *
+ * Direct-mode overrides (`'ssr' | 'cookie' | 'auth'`) skip escalation
+ * entirely and run exactly the named tier. `'cookie'` does NOT fall back to
+ * SSR — that's the whole point of forcing the cookie path (spec §4.4).
+ */
 export async function fetchThread(rawUrl: string, opts: FetchOptions = {}): Promise<FetchResult> {
   const parsed = parseXUrl(rawUrl);
   const cfg = loadConfig();
   const mode = opts.mode ?? cfg.fetcher.mode;
 
-  if (mode === 'auth') {
-    return fetchInMode(parsed, 'auth', opts);
+  // ---- Direct-mode overrides (skip escalation) ----
+  if (mode === 'ssr') {
+    const result = await _orchestratorDeps.fetchSsr(parsed.canonical);
+    _orchestratorDeps.putCachedThread(result.thread);
+    return { thread: result.thread, tier: 'ssr' };
   }
-  if (mode === 'anon') {
-    return fetchInMode(parsed, 'anon', opts);
-  }
-  // auto: anonymous first; on AuthRequiredError, retry with auth
-  try {
-    return await fetchInMode(parsed, 'anon', opts);
-  } catch (err) {
-    if (err instanceof AuthRequiredError) {
-      logger.info('anonymous fetch hit auth wall; retrying with saved login');
-      return fetchInMode(parsed, 'auth', opts);
+
+  if (mode === 'cookie') {
+    const browsers = _orchestratorDeps.detectChromiumBrowsers();
+    if (browsers.length === 0) {
+      throw new FetchError(
+        '--mode cookie requires Chrome, Brave, or Edge with X cookies, but no Chromium browser was detected on this system.',
+      );
     }
-    throw err;
+    let lastErr: unknown;
+    for (const browser of browsers) {
+      try {
+        const cookies = await _orchestratorDeps.readXCookies(browser);
+        if (cookies.length === 0) {
+          logger.debug('mode=cookie: no X cookies in browser, trying next', {
+            browser: browser.name,
+          });
+          continue;
+        }
+        const result = await _orchestratorDeps.fetchWithCookies(parsed, cookies, opts);
+        return { ...result, tier: 'cookie' };
+      } catch (err) {
+        lastErr = err;
+        logger.debug('mode=cookie: browser failed, trying next', {
+          browser: browser.name,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    throw new FetchError(
+      '--mode cookie failed: no Chromium browser yielded usable X cookies. Are you logged into X in Chrome/Brave/Edge?',
+      { cause: lastErr },
+    );
   }
+
+  if (mode === 'auth') {
+    const result = await _orchestratorDeps.fetchWithStorageState(parsed, opts);
+    return { ...result, tier: 'auth' };
+  }
+
+  // ---- AUTO mode — 3-tier escalation ----
+  // ---- TIER 1: COOKIE+PW (PRIMARY) ----
+  try {
+    const browsers = _orchestratorDeps.detectChromiumBrowsers();
+    for (const browser of browsers) {
+      try {
+        const cookies = await _orchestratorDeps.readXCookies(browser);
+        if (cookies.length === 0) {
+          logger.debug('cookie tier: no X cookies in browser, trying next', {
+            browser: browser.name,
+          });
+          continue;
+        }
+        const result = await _orchestratorDeps.fetchWithCookies(parsed, cookies, opts);
+        return { ...result, tier: 'cookie' };
+      } catch (err) {
+        if (err instanceof KeychainDeniedError) {
+          logger.debug('cookie tier: keychain denied, trying next browser', {
+            browser: browser.name,
+          });
+          continue;
+        }
+        if (err instanceof AuthWallError) {
+          logger.debug('cookie tier: cookies present but expired, trying next browser', {
+            browser: browser.name,
+          });
+          continue;
+        }
+        // Fatal Playwright launch / network / unexpected error — propagate.
+        throw err;
+      }
+    }
+    logger.debug('cookie tier: no Chromium browser yielded usable X cookies, falling back to SSR');
+  } catch (err) {
+    if (err instanceof FetchError) throw err;
+    // Catch-all: detection itself failed (FS permission, etc.). Don't block
+    // the user — let SSR take over.
+    logger.debug('cookie tier failed entirely, falling back to SSR', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ---- TIER 2: SSR (FALLBACK) ----
+  try {
+    const ssr = await _orchestratorDeps.fetchSsr(parsed.canonical);
+    if (ssr.thread.rootPost) {
+      _orchestratorDeps.putCachedThread(ssr.thread);
+      return { thread: ssr.thread, tier: 'ssr' };
+    }
+    logger.info('SSR returned no root post — likely login wall, escalating to saved auth');
+  } catch (err) {
+    logger.warn('SSR fetch failed, escalating to saved auth', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ---- TIER 3: SAVED AUTH (LAST RESORT) ----
+  if (existsSync(cfg.fetcher.storageStatePath)) {
+    try {
+      const result = await _orchestratorDeps.fetchWithStorageState(parsed, opts);
+      return { ...result, tier: 'auth' };
+    } catch (err) {
+      logger.error('saved auth fetch failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // All tiers exhausted — surface a clear actionable error.
+  throw new FetchError(
+    'This content requires authentication. Possible causes: not logged into X in Chrome/Brave/Edge, cookies expired, or protected/age-gated content. Run `xray auth` to save a login session.',
+  );
 }
 
-async function fetchInMode(
+/**
+ * P1.5.2 — Tier 1 inner path. Builds a Playwright context seeded with the
+ * decrypted Chromium cookies, runs the existing TweetDetail capture flow,
+ * and projects the captured detail into the canonical `XThread` shape.
+ *
+ * Throws `AuthWallError` when the cookie-injected fetch fails to produce a
+ * root post — signals "cookies present but session no longer valid" and
+ * lets the orchestrator silently try the next browser / SSR. Spec §8.2.
+ */
+async function fetchWithCookiesImpl(
   parsed: ParsedXUrl,
-  mode: 'anon' | 'auth',
+  cookies: DecryptedCookie[],
   opts: FetchOptions,
 ): Promise<FetchResult> {
-  const cfg = loadConfig();
-  const ctx = await newContext(mode);
+  const ctx = await _orchestratorDeps.newContextWithCookies(cookies);
   try {
     const captured = await navigateAndCapture(ctx, parsed.canonical, parsed.id, opts);
     const detail = captured.detail;
     if (!detail.rootPost) {
-      // Either auth wall or the page didn't deliver TweetDetail.
-      if (mode === 'anon') throw new AuthRequiredError();
+      // Cookies were present but X still didn't deliver TweetDetail — session
+      // is dead. Distinct from a hard FetchError so the orchestrator can
+      // fall through silently.
+      throw new AuthWallError('cookie-injected fetch returned no root post');
+    }
+    return buildResult(detail, captured.coverage);
+  } finally {
+    await ctx.close();
+  }
+}
+
+/**
+ * P1.5.2 — Tier 3 inner path. Wraps the existing `newContext('auth')` flow
+ * (which loads `~/.xray/storageState.json`) so the orchestrator's three
+ * tier-paths all return the same `{ thread, coverage }` shape.
+ */
+async function fetchWithStorageStateImpl(
+  parsed: ParsedXUrl,
+  opts: FetchOptions,
+): Promise<FetchResult> {
+  const ctx = await newContext('auth');
+  try {
+    const captured = await navigateAndCapture(ctx, parsed.canonical, parsed.id, opts);
+    const detail = captured.detail;
+    if (!detail.rootPost) {
       throw new FetchError(
         'TweetDetail response was not captured. The tweet may be deleted, protected, or X may have rate-limited.',
       );
     }
-    const coverage = captured.coverage;
-    const partial = detail.comments.length === 0 || (coverage ? coverage.status !== 'ok' : false);
-    let partialReason: string | undefined;
-    if (detail.comments.length === 0) {
-      partialReason = 'no replies returned in first page';
-    } else if (coverage && coverage.status !== 'ok') {
-      partialReason = coverage.failureReason ?? `coverage status: ${coverage.status}`;
-    }
-    const thread: XThread = {
-      rootPost: detail.rootPost,
-      authorPosts: detail.authorPosts,
-      quoteTweets: dedupePosts(detail.quoteTweets),
-      comments: detail.comments,
-      fetchedAt: new Date().toISOString(),
-      partial,
-      ...(partialReason !== undefined ? { partialReason } : {}),
-    };
-    putCachedThread(thread);
-    return { thread, ...(coverage ? { coverage } : {}) };
+    return buildResult(detail, captured.coverage);
   } finally {
     await ctx.close();
-    void cfg; // silence unused
   }
+}
+
+/**
+ * Shared projection of `ParsedDetail` → `XThread` + cache write. Identical
+ * for Tier 1 and Tier 3 — both go through the GraphQL capture flow.
+ */
+function buildResult(detail: ParsedDetail, coverage: WalkCoverage | undefined): FetchResult {
+  const partial = detail.comments.length === 0 || (coverage ? coverage.status !== 'ok' : false);
+  let partialReason: string | undefined;
+  if (detail.comments.length === 0) {
+    partialReason = 'no replies returned in first page';
+  } else if (coverage && coverage.status !== 'ok') {
+    partialReason = coverage.failureReason ?? `coverage status: ${coverage.status}`;
+  }
+  const thread: XThread = {
+    rootPost: detail.rootPost as NonNullable<ParsedDetail['rootPost']>,
+    authorPosts: detail.authorPosts,
+    quoteTweets: dedupePosts(detail.quoteTweets),
+    comments: detail.comments,
+    fetchedAt: new Date().toISOString(),
+    partial,
+    ...(partialReason !== undefined ? { partialReason } : {}),
+  };
+  _orchestratorDeps.putCachedThread(thread);
+  return { thread, ...(coverage ? { coverage } : {}) };
 }
 
 function dedupePosts(posts: XPost[]): XPost[] {
@@ -110,9 +314,6 @@ type CapturedDetail = {
   detail: ParsedDetail;
   coverage?: WalkCoverage;
 };
-
-const DEFAULT_MAX_REPLIES = 50;
-const DEFAULT_DEPTH = 3;
 
 async function navigateAndCapture(
   ctx: BrowserContext,
@@ -158,25 +359,17 @@ async function navigateAndCapture(
   page.on('request', onRequest);
   page.on('response', onResponse);
 
-  let authWall = false;
   let coverage: WalkCoverage | undefined;
   try {
-    const response = await page.goto(url, {
+    await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout: cfg.fetcher.timeoutMs,
     });
-    if (response && (response.status() === 401 || response.status() === 403)) {
-      authWall = true;
-    }
     // wait briefly for the GraphQL TweetDetail response to land
     await waitForRoot(page, rootId, aggregate, cfg.fetcher.timeoutMs);
     // small scroll to nudge X into firing the first follow-up TweetDetail if any
     await page.evaluate(() => window.scrollBy(0, 1200)).catch(() => undefined);
     await page.waitForTimeout(400);
-
-    if (!aggregate.rootPost && page.url().includes('/i/flow/login')) {
-      authWall = true;
-    }
 
     if (aggregate.rootPost) {
       const walkOpts = {
@@ -201,7 +394,6 @@ async function navigateAndCapture(
     await page.close();
   }
 
-  if (authWall && !aggregate.rootPost) throw new AuthRequiredError();
   return { detail: aggregate, ...(coverage ? { coverage } : {}) };
 }
 

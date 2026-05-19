@@ -23,7 +23,7 @@ const ConfigSchema = z.object({
     ttlSeconds: z.coerce.number().int().nonnegative().default(86400),
   }),
   fetcher: z.object({
-    mode: z.enum(['auto', 'anon', 'auth']).default('auto'),
+    mode: z.enum(['auto', 'ssr', 'cookie', 'auth']).default('auto'),
     timeoutMs: z.coerce.number().int().positive().default(30_000),
     headless: z.boolean().default(true),
     storageStatePath: z.string(),

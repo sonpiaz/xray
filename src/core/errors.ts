@@ -73,3 +73,17 @@ export class CookieDecryptError extends XRayError {
     this.name = 'CookieDecryptError';
   }
 }
+
+/**
+ * Raised by the P1.5.2 cookie-injected Playwright path when cookies WERE
+ * present but the page still failed to deliver a root post (auth wall,
+ * expired session, X bouncing the request to /i/flow/login). Distinct from
+ * `FetchError` so the orchestrator can pattern-match this and fall through
+ * to the next browser / SSR without surfacing a hard error to the user.
+ */
+export class AuthWallError extends XRayError {
+  constructor(message: string, opts: { cause?: unknown } = {}) {
+    super('AUTH_WALL', message, opts);
+    this.name = 'AuthWallError';
+  }
+}

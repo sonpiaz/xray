@@ -13,9 +13,11 @@ const VERSION = '0.0.1';
 const ThreadInput = {
   url: z.string().url().describe('Tweet URL (x.com/<user>/status/<id>)'),
   mode: z
-    .enum(['auto', 'anon', 'auth'])
+    .enum(['auto', 'ssr', 'cookie', 'auth'])
     .optional()
-    .describe('Fetch mode. Default: auto (anonymous → cookies fallback).'),
+    .describe(
+      'Fetch mode. Default: auto (3-tier escalation: Chromium cookies → SSR fallback → saved auth). `ssr` forces no-auth HTML scrape, `cookie` forces cookie-injected Playwright with no fallback, `auth` uses saved storageState.',
+    ),
   noCache: z.boolean().optional().describe('Skip cache for the fetch step.'),
   raw: z.boolean().optional().describe('Skip LLM analysis; return raw thread only.'),
   depth: z

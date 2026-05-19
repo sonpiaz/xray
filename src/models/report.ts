@@ -36,9 +36,11 @@ export const ThreadCoverageSchema = z.object({
   prefilterApplied: z.boolean().optional(),
   candidatePool: z.number().int().nonnegative().optional(),
   classifiedFromPool: z.number().int().nonnegative().optional(),
-  // P1.5.0 — which escalation tier produced this data. Optional so P0/P1 outputs
-  // without tier still parse. P1.5.2 will populate this for every fetch path.
-  tier: z.enum(['ssr', 'anon', 'cookie', 'auth']).optional(),
+  // P1.5.2 — which escalation tier produced this data. Optional so P0/P1 outputs
+  // without tier still parse. The `'anon'` value from P1.5.0's initial enum has
+  // been removed — the anonymous-Playwright tier was dropped in the revised
+  // 3-tier architecture (see PHASE_1_5_PLAN.md §6.1).
+  tier: z.enum(['ssr', 'cookie', 'auth']).optional(),
 });
 export type ThreadCoverage = z.infer<typeof ThreadCoverageSchema>;
 

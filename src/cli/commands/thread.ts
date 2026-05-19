@@ -21,8 +21,16 @@ export async function threadCommand(url: string, opts: ThreadCmdOptions): Promis
   if (opts.noCache) research_opts.noCache = true;
   if (opts.raw) research_opts.skipAnalysis = true;
   if (opts.mode) {
-    if (!['auto', 'anon', 'auth'].includes(opts.mode)) {
-      throw new Error(`Invalid --mode: ${opts.mode}. Use auto|anon|auth.`);
+    // P1.5.2 — `'anon'` was removed in v0.2.0 (see PHASE_1_5_PLAN.md §6.3).
+    // Surface a targeted error instead of a generic "invalid mode" so users
+    // upgrading from v0.1.x get the migration path inline.
+    if (opts.mode === 'anon') {
+      throw new Error(
+        '--mode anon was removed in v0.2.0. Use --mode ssr (no auth) or --mode cookie (force cookies).',
+      );
+    }
+    if (!['auto', 'ssr', 'cookie', 'auth'].includes(opts.mode)) {
+      throw new Error(`Invalid --mode: ${opts.mode}. Use auto|ssr|cookie|auth.`);
     }
     research_opts.mode = opts.mode as FetchMode;
   }

@@ -55,6 +55,22 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
         ...(result.coverage.failureReason !== undefined
           ? { failureReason: result.coverage.failureReason }
           : {}),
+        // P1.5.2 — propagate the escalation tier into the report so downstream
+        // agents know how the data was obtained.
+        ...(result.tier !== undefined ? { tier: result.tier } : {}),
+      };
+    } else if (result.tier !== undefined) {
+      // SSR-only paths skip the Playwright walk entirely (no coverage). Build a
+      // minimal coverage record so `report.coverage.tier` is still populated.
+      coverage = {
+        targetDepth: 0,
+        achievedDepth: 0,
+        targetReplies: opts.maxReplies ?? 50,
+        fetchedReplies: thread.comments.length,
+        classifiedReplies: 0,
+        paginationCursors: [],
+        status: thread.partial ? 'partial' : 'ok',
+        tier: result.tier,
       };
     }
   }
