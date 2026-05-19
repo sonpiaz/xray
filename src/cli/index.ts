@@ -5,8 +5,9 @@ import { authCommand } from './commands/auth.ts';
 import { cacheClearCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { threadCommand } from './commands/thread.ts';
+import { videoCommand } from './commands/video.ts';
 
-const VERSION = '0.2.2';
+const VERSION = '0.3.0';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');
@@ -25,8 +26,24 @@ export async function runCli(argv: string[]): Promise<number> {
     .option('--depth <n>', 'Max reply nesting depth to walk (default 3)')
     .option('--max-replies <n>', 'Max top-level replies to fetch (default 50)')
     .option('--deep', 'Run deep analysis: per-subtree Kyma calls + synthesis (~10x cost)')
+    .option(
+      '--video',
+      'Run video analysis on any X-native videos in the thread (~$0.05-0.50 per video)',
+    )
     .action(async (url: string, opts: Parameters<typeof threadCommand>[1]) => {
       await threadCommand(url, opts);
+    });
+
+  cli
+    .command('video <url>', 'Analyze a video URL (X-native, YouTube, TikTok, Vimeo, LinkedIn)')
+    .option('--json', 'Output JSON instead of Markdown')
+    .option('-o, --output <path>', 'Write output to a file')
+    .option('--no-cache', 'Skip the local cache for download/transcribe/vision')
+    .option('--raw', 'Skip LLM synthesis; emit transcript + frame descriptions only')
+    .option('--model <name>', 'Override Kyma synthesis model')
+    .option('--frames <n>', 'Fix the frame count (1-24, default: scene-detect with 4-12 clamp)')
+    .action(async (url: string, opts: Parameters<typeof videoCommand>[1]) => {
+      await videoCommand(url, opts);
     });
 
   cli

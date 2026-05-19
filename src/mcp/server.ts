@@ -6,9 +6,11 @@ import { XRayError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
 import { closeBrowser } from '../fetcher/browser.ts';
 import { research } from '../intelligence/analyze-thread.ts';
+import { type VideoAnalyzeOptions, analyzeVideo } from '../intelligence/video.ts';
 import { renderReportMarkdown } from '../render/markdown.ts';
+import { renderVideoMarkdown } from '../render/video-markdown.ts';
 
-const VERSION = '0.2.2';
+const VERSION = '0.3.0';
 
 const ThreadInput = {
   url: z.string().url().describe('Tweet URL (x.com/<user>/status/<id>)'),
@@ -38,10 +40,30 @@ const ThreadInput = {
     .boolean()
     .optional()
     .describe('Run deep analysis: per-subtree Kyma calls + synthesis. ~10x cost.'),
+  video: z
+    .boolean()
+    .optional()
+    .describe(
+      'Run video analysis on any X-native videos in the thread (~$0.05-0.50 per video, cap 3).',
+    ),
   format: z
     .enum(['markdown', 'json', 'both'])
     .optional()
     .describe('Output format. Default: markdown (recommended for agent consumption).'),
+};
+
+const VideoInput = {
+  url: z.string().url().describe('Video URL (X-native, YouTube, TikTok, Vimeo, LinkedIn).'),
+  noCache: z
+    .boolean()
+    .optional()
+    .describe('Skip the video cache (re-download, re-transcribe, re-analyze).'),
+  raw: z.boolean().optional().describe('Skip LLM synthesis; return transcript + frames only.'),
+  model: z.string().optional().describe('Override Kyma synthesis model.'),
+  format: z
+    .enum(['markdown', 'json', 'both'])
+    .optional()
+    .describe('Output format. Default: markdown.'),
 };
 
 export async function startMcpServer(): Promise<void> {
@@ -64,6 +86,7 @@ export async function startMcpServer(): Promise<void> {
         if (args.depth !== undefined) opts.depth = args.depth;
         if (args.maxReplies !== undefined) opts.maxReplies = args.maxReplies;
         if (args.deep) opts.deep = true;
+        if (args.video) opts.video = true;
 
         const report = await research(args.url, opts);
         const format = args.format ?? 'markdown';
@@ -90,6 +113,54 @@ export async function startMcpServer(): Promise<void> {
       } catch (err) {
         const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
         logger.error(`xray_thread failed: ${msg}`);
+        return {
+          isError: true,
+          content: [{ type: 'text', text: msg }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    'xray_video',
+    {
+      title: 'Analyze a video URL',
+      description:
+        'Download a video (X-native, YouTube, TikTok, Vimeo, LinkedIn), transcribe its audio, run vision on scene-detect frames, and synthesize a structured VideoReport. Cost surfaced via `estimatedCostUsd`.',
+      inputSchema: VideoInput,
+    },
+    async (args) => {
+      try {
+        const opts: VideoAnalyzeOptions = {};
+        if (args.noCache) opts.noCache = true;
+        if (args.raw) opts.raw = true;
+        if (args.model) opts.synthesisModel = args.model;
+
+        const report = await analyzeVideo(args.url, opts);
+        const format = args.format ?? 'markdown';
+
+        if (format === 'json') {
+          return {
+            content: [{ type: 'text', text: JSON.stringify(report, null, 2) }],
+            structuredContent: report as unknown as Record<string, unknown>,
+          };
+        }
+        if (format === 'both') {
+          return {
+            content: [
+              { type: 'text', text: renderVideoMarkdown(report, { mode: 'standalone' }) },
+              { type: 'text', text: JSON.stringify(report, null, 2) },
+            ],
+            structuredContent: report as unknown as Record<string, unknown>,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: renderVideoMarkdown(report, { mode: 'standalone' }) }],
+          structuredContent: report as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
+        logger.error(`xray_video failed: ${msg}`);
         return {
           isError: true,
           content: [{ type: 'text', text: msg }],
