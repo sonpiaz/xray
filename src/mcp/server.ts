@@ -8,7 +8,7 @@ import { closeBrowser } from '../fetcher/browser.ts';
 import { research } from '../intelligence/analyze-thread.ts';
 import { renderReportMarkdown } from '../render/markdown.ts';
 
-const VERSION = '0.0.1';
+const VERSION = '0.2.0';
 
 const ThreadInput = {
   url: z.string().url().describe('Tweet URL (x.com/<user>/status/<id>)'),
