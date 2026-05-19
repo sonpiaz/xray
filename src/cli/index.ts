@@ -8,7 +8,7 @@ import { mcpCommand } from './commands/mcp.ts';
 import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
 
-const VERSION = '0.3.1';
+const VERSION = '0.4.0';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');
@@ -30,6 +30,10 @@ export async function runCli(argv: string[]): Promise<number> {
     .option(
       '--video',
       'Run video analysis on any X-native videos in the thread (~$0.05-0.50 per video)',
+    )
+    .option(
+      '--articles',
+      'Run article analysis (X Articles + external links + cross-reference) on linked content. Opt-in, ~$0.04-0.30 per article, cap 5 per thread.',
     )
     .action(async (url: string, opts: Parameters<typeof threadCommand>[1]) => {
       await threadCommand(url, opts);

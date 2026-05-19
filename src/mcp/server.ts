@@ -1,78 +1,23 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
 import { closeDb } from '../cache/db.ts';
 import { XRayError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
 import { closeBrowser } from '../fetcher/browser.ts';
 import { research } from '../intelligence/analyze-thread.ts';
+import { type ArticleAnalyzeOptions, analyzeArticle } from '../intelligence/article.ts';
 import { type VideoAnalyzeOptions, analyzeVideo } from '../intelligence/video.ts';
+import { renderArticleMarkdown } from '../render/article-markdown.ts';
 import { renderReportMarkdown } from '../render/markdown.ts';
 import { renderVideoMarkdown } from '../render/video-markdown.ts';
+// P3.3 — schemas live in `./schemas.ts` so they're importable in unit
+// tests without dragging in `bun:sqlite` from the cache layer. The
+// server re-exports them so existing importers keep working.
+import { ArticleInput, ThreadInput, VideoInput } from './schemas.ts';
 
-const VERSION = '0.3.1';
+export { ArticleInput, ThreadInput, VideoInput } from './schemas.ts';
 
-const ThreadInput = {
-  url: z.string().url().describe('Tweet URL (x.com/<user>/status/<id>)'),
-  mode: z
-    .enum(['auto', 'ssr', 'cookie', 'auth'])
-    .optional()
-    .describe(
-      'Fetch mode. Default: auto (3-tier escalation: Chromium cookies → SSR fallback → saved auth). `ssr` forces no-auth HTML scrape, `cookie` forces cookie-injected Playwright with no fallback, `auth` uses saved storageState.',
-    ),
-  noCache: z.boolean().optional().describe('Skip cache for the fetch step.'),
-  raw: z.boolean().optional().describe('Skip LLM analysis; return raw thread only.'),
-  depth: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .optional()
-    .describe('Max reply nesting depth to walk. Default: 3.'),
-  maxReplies: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
-    .optional()
-    .describe('Max top-level replies to fetch. Default: 50.'),
-  deep: z
-    .boolean()
-    .optional()
-    .describe('Run deep analysis: per-subtree Kyma calls + synthesis. ~10x cost.'),
-  video: z
-    .boolean()
-    .optional()
-    .describe(
-      'Run video analysis on any X-native videos in the thread (~$0.05-0.50 per video, cap 3).',
-    ),
-  format: z
-    .enum(['markdown', 'json', 'both'])
-    .optional()
-    .describe('Output format. Default: markdown (recommended for agent consumption).'),
-};
-
-const VideoInput = {
-  url: z.string().url().describe('Video URL (X-native, YouTube, TikTok, Vimeo, LinkedIn).'),
-  noCache: z
-    .boolean()
-    .optional()
-    .describe('Skip the video cache (re-download, re-transcribe, re-analyze).'),
-  synthesize: z
-    .boolean()
-    .optional()
-    .describe(
-      'Run XRay-side Kyma synthesis (topic/keyMoments/summary). DEFAULT FALSE for MCP — caller agent typically synthesises better with its own context. Set true if you want a pre-built summary and accept the ~$0.02/video cost.',
-    ),
-  model: z
-    .string()
-    .optional()
-    .describe('Override Kyma synthesis model (only used if synthesize=true).'),
-  format: z
-    .enum(['markdown', 'json', 'both'])
-    .optional()
-    .describe('Output format. Default: markdown.'),
-};
+const VERSION = '0.4.0';
 
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({ name: 'xray', version: VERSION });
@@ -95,6 +40,7 @@ export async function startMcpServer(): Promise<void> {
         if (args.maxReplies !== undefined) opts.maxReplies = args.maxReplies;
         if (args.deep) opts.deep = true;
         if (args.video) opts.video = true;
+        if (args.articles) opts.articles = true;
 
         const report = await research(args.url, opts);
         const format = args.format ?? 'markdown';
@@ -171,6 +117,63 @@ export async function startMcpServer(): Promise<void> {
       } catch (err) {
         const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
         logger.error(`xray_video failed: ${msg}`);
+        return {
+          isError: true,
+          content: [{ type: 'text', text: msg }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    'xray_article',
+    {
+      title: 'Analyze an article (X Article or external HTML)',
+      description:
+        'Fetch + parse + summarize an article, with optional tweet-context cross-reference attribution. Returns a structured ArticleSummary with body, summary, keyPoints, and optional crossReferences[]. Handles X Articles (native long-form), external HTML (Substack, Medium, dev.to, GitHub, generic blogs) via 3-tier fetch escalation. Default synthesize=true (opposite of xray_video) — agents can opt out for raw body + cross-references only.',
+      inputSchema: ArticleInput,
+    },
+    async (args) => {
+      try {
+        const opts: ArticleAnalyzeOptions = { url: args.url };
+        if (args.noCache) opts.noCache = true;
+        // Default synthesize=true for articles (see ArticleInput.synthesize
+        // for rationale). Caller sets synthesize=false to get the raw body
+        // + cross-references and skip the LLM summary step.
+        if (args.synthesize === false) opts.raw = true;
+        if (args.model) opts.synthesisModel = args.model;
+        if (args.tweetContext) {
+          opts.tweetContext = {
+            text: args.tweetContext,
+            ...(args.tweetPostId ? { postId: args.tweetPostId } : {}),
+          };
+        }
+
+        const summary = await analyzeArticle(opts);
+        const format = args.format ?? 'markdown';
+
+        if (format === 'json') {
+          return {
+            content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+            structuredContent: summary as unknown as Record<string, unknown>,
+          };
+        }
+        if (format === 'both') {
+          return {
+            content: [
+              { type: 'text', text: renderArticleMarkdown(summary, { mode: 'standalone' }) },
+              { type: 'text', text: JSON.stringify(summary, null, 2) },
+            ],
+            structuredContent: summary as unknown as Record<string, unknown>,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: renderArticleMarkdown(summary, { mode: 'standalone' }) }],
+          structuredContent: summary as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
+        logger.error(`xray_article failed: ${msg}`);
         return {
           isError: true,
           content: [{ type: 'text', text: msg }],
