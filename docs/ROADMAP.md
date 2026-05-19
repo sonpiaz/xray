@@ -1,0 +1,131 @@
+# XRay Roadmap
+
+**Project:** XRay
+**Status:** Draft
+**Last Updated:** May 2026
+**Vision:** A high-quality, open-source research tool that enables Grok CLI and AI agents to deeply understand content on X.
+
+---
+
+## Vision & Goals
+
+XRay aims to become the best-in-class tool for **deep research on X**, with a strong focus on being usable and effective when called by AI agents (especially Grok CLI).
+
+**Core Goals:**
+- Deliver structured, high-quality insights from posts, threads, videos, and discussions on X.
+- Make Kyma API the primary intelligence engine while remaining usable without it.
+- Prioritize quality and reliability over speed and feature quantity.
+- Be maintainable as a high-quality open source project.
+
+---
+
+## Overall Phased Approach
+
+| Phase     | Name                    | Focus Area                          | Status      | Target  |
+|-----------|-------------------------|-------------------------------------|-------------|---------|
+| Pre-Phase | Spec & Architecture     | Foundation, principles, decisions   | Complete    | -       |
+| **0**     | Foundation              | Thread research + basic pipeline    | In progress | Q2 2026 |
+| **1**     | Deep Conversation       | Full comment trees + analysis       | Planned     | Q3 2026 |
+| **2**     | Video Understanding     | Video analysis on X                 | Planned     | Q3 2026 |
+| **3**     | External Content        | Article & link understanding        | Planned     | Q4 2026 |
+| **4**     | Advanced Research       | Semantic search & narrative tools   | Planned     | Q4 2026 |
+| **5**     | Polish & OSS Readiness  | Hardening, docs, MCP, exports       | Planned     | Q1 2027 |
+| **6**     | Launch & Post-Launch    | Public release + iteration          | Planned     | Q1 2027 |
+
+Phases 1–3 may run in parallel once Phase 0 is stable.
+
+---
+
+## Phase 0 — Foundation (most important)
+
+**Goal:** Deliver a reliable base for researching X threads.
+
+**Deliverables:**
+- `xray thread <url>` command
+- Full thread fetching (incl. quote tweets)
+- Basic comment extraction
+- Local SQLite caching
+- Structured output (Zod)
+- Basic Kyma API integration
+- Basic MCP tool exposure
+- Clean Markdown report generation
+- Hybrid auth (anonymous → cookies fallback via `xray auth`)
+
+**Success criteria:**
+- `xray thread <url>` reliably returns a structured report.
+- Output is directly usable by Grok CLI via MCP.
+- Cache hits are <100 ms.
+
+---
+
+## Phase 1 — Deep Conversation
+- Full reply tree extraction (multi-level)
+- Comment classification + quality scoring
+- Insight extraction at thread level
+- Support for very long nested discussions
+
+## Phase 2 — Video Understanding
+- Auto-detect & download X-hosted video
+- Intelligent frame extraction
+- Transcription + contextual understanding (Kyma)
+- Timestamped insights
+
+## Phase 3 — External Content
+- Fetch & parse linked articles
+- Cross-reference between post and external source
+- Support major article platforms + YouTube
+
+## Phase 4 — Advanced Research
+- Semantic search over fetched content
+- Profile analysis
+- Narrative / controversy tracking
+- Batch research & comparison
+
+## Phase 5 — Polish & OSS Readiness
+- Advanced caching + rate-limit handling
+- Rich export formats (Markdown, JSON, Obsidian)
+- Comprehensive documentation
+- Stable, documented MCP tools
+- Contribution guidelines
+
+## Phase 6 — Launch
+- v1.0 release
+- GitHub release + announcement
+- Grok CLI integration examples
+- Community feedback loop
+
+---
+
+## Milestones
+
+| Milestone | Target          | Description                          |
+|-----------|-----------------|--------------------------------------|
+| M0        | Now             | Spec + Roadmap                       |
+| M1        | End of Phase 0  | First usable version                 |
+| M2        | End of Phase 2  | Multimodal (thread + video)          |
+| M3        | End of Phase 4  | Advanced research                    |
+| M4        | End of Phase 5  | Production-ready OSS                 |
+| M5        | Phase 6         | Public launch                        |
+
+---
+
+## Principles
+
+- **Quality First** — Each phase must clear a quality bar before the next starts.
+- **Agent-Centric** — Every feature considers Grok CLI consumption.
+- **Kyma Preferred** — Heavy intelligence goes through Kyma.
+- **Incremental Value** — Each phase ships usable value standalone.
+- **OSS Sustainability** — Architecture + code support long-term contribution.
+
+---
+
+## Risks & Open Questions
+
+- How fast does X change its UI? (Playwright selector module + weekly integration test)
+- How much local intelligence (no Kyma) should we support? (Phase 5 decision)
+- Right balance between cache aggressiveness and freshness?
+- Should XRay long-term support multiple backends beyond Kyma?
+
+---
+
+**End of ROADMAP.md**

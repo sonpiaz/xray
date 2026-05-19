@@ -1,0 +1,60 @@
+{
+  "name": "xray",
+  "version": "0.0.1",
+  "description": "Deep research on X — high-quality structured insights for AI agents.",
+  "license": "MIT",
+  "author": "sonpiaz <sonxpiaz@gmail.com>",
+  "homepage": "https://github.com/sonpiaz/xray",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sonpiaz/xray.git"
+  },
+  "type": "module",
+  "module": "src/index.ts",
+  "bin": {
+    "xray": "./bin/xray.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "xray": "bun run bin/xray.ts",
+    "dev": "bun run --watch bin/xray.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src bin tests",
+    "format": "biome format --write src bin tests",
+    "typecheck": "tsc --noEmit",
+    "playwright:install": "bunx playwright install chromium"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cac": "^6.7.14",
+    "playwright": "^1.49.0",
+    "undici": "^7.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "^1.1.14",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "keywords": [
+    "x",
+    "twitter",
+    "research",
+    "ai-agent",
+    "mcp",
+    "grok",
+    "kyma",
+    "cli"
+  ]
+}

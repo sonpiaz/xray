@@ -1,0 +1,38 @@
+# deps
+node_modules/
+.pnp.*
+
+# build
+dist/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# xray runtime data
+.xray-cache/
+~/.xray/
+storageState.json
+xray.db
+xray.db-*
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# logs
+*.log
+logs/
+
+# test artifacts
+coverage/
+playwright-report/
+test-results/
