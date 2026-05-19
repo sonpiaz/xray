@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { XThreadSchema } from './thread.ts';
+import { VideoReportSchema } from './video-report.ts';
 
 export const KeyInsightSchema = z.object({
   insight: z.string(),
@@ -135,5 +136,9 @@ export const ResearchReportSchema = z.object({
   // so existing P0/P1.1/P1.2 outputs remain byte-identical.
   subtreeSummaries: z.array(SubtreeSummarySchema).optional(),
   deepSynthesis: DeepSynthesisSchema.optional(),
+  // P2.3 — present only when `--video` / `video: true` ran AND at least one
+  // video was detected on the root post or author follow-ups. Absent on
+  // every prior path so v0.0.1 / v0.2.x outputs remain valid.
+  videoAnalysis: z.array(VideoReportSchema).optional(),
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;

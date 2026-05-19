@@ -5,10 +5,17 @@ import { type FetchMode, type FetchOptions, fetchThread } from '../fetcher/threa
 import { parseXUrl } from '../fetcher/url.ts';
 import { analyzeThread } from '../kyma/analyze.ts';
 import type { ShallowAnalysisDigest } from '../kyma/prompts.ts';
+import type { XMedia } from '../models/media.ts';
+import type { XPost } from '../models/post.ts';
 import type { ResearchReport, StanceDistribution, ThreadCoverage } from '../models/report.ts';
 import type { XThread } from '../models/thread.ts';
+import type { VideoReport } from '../models/video-report.ts';
 import { classifyComments, computeStanceDistribution } from './classify.ts';
 import { deepAnalyze } from './deep.ts';
+import { analyzeVideo } from './video.ts';
+
+/** Defensive cap so a 10-video thread doesn't burn $5+ silently. */
+const MAX_VIDEOS_PER_THREAD = 3;
 
 export type ResearchOptions = {
   mode?: FetchMode;
@@ -20,6 +27,11 @@ export type ResearchOptions = {
   // P1.3 — when true, runs per-subtree Kyma calls + a synthesis call ON TOP OF
   // the shallow analyze pass. Default false preserves Phase 0/P1.1/P1.2 behavior.
   deep?: boolean;
+  // P2.3 — when true, scan rootPost + authorPosts for `type === 'video'`
+  // media entries and run the video pipeline on each. Capped at
+  // MAX_VIDEOS_PER_THREAD. Comments are not scanned (too expensive).
+  // Failures degrade into warnings; the rest of the report still ships.
+  video?: boolean;
 };
 
 export async function research(url: string, opts: ResearchOptions = {}): Promise<ResearchReport> {
@@ -165,6 +177,45 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     });
   }
 
+  // P2.3 — Video pipeline. Runs after analyze so a video failure can't
+  // block the text report. Scans rootPost.media + authorPosts[].media for
+  // type === 'video' (comments not scanned — expensive).
+  let videoAnalysis: VideoReport[] | undefined;
+  if (opts.video) {
+    const candidates = collectVideoCandidates(thread);
+    if (candidates.length === 0) {
+      logger.debug('video flag set but no video media found on root/author posts');
+    } else {
+      if (candidates.length > MAX_VIDEOS_PER_THREAD) {
+        logger.debug('capping video analysis at MAX_VIDEOS_PER_THREAD', {
+          found: candidates.length,
+          cap: MAX_VIDEOS_PER_THREAD,
+        });
+        partialWarnings.push(
+          `Found ${candidates.length} videos on this thread; analyzing first ${MAX_VIDEOS_PER_THREAD}.`,
+        );
+      }
+      const slice = candidates.slice(0, MAX_VIDEOS_PER_THREAD);
+      const results: VideoReport[] = [];
+      for (const media of slice) {
+        try {
+          const report = await analyzeVideo(
+            { url: media.url, mediaHint: media },
+            {
+              ...(opts.noCache ? { noCache: true } : {}),
+            },
+          );
+          results.push(report);
+        } catch (err) {
+          const msg = String(err);
+          partialWarnings.push(`Video pipeline failed for ${media.url}: ${msg}`);
+          logger.warn('video pipeline failed', { url: media.url, err: msg });
+        }
+      }
+      if (results.length > 0) videoAnalysis = results;
+    }
+  }
+
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -181,5 +232,28 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     ...(stanceDistribution ? { stanceDistribution } : {}),
     ...(subtreeSummaries ? { subtreeSummaries } : {}),
     ...(deepSynthesis ? { deepSynthesis } : {}),
+    ...(videoAnalysis ? { videoAnalysis } : {}),
   };
+}
+
+/**
+ * P2.3 — Collect video media URLs from rootPost + authorPosts. Comments
+ * are intentionally NOT scanned (a busy thread could expose 50+ videos
+ * and burn $5+ in a single call). De-duplicates by URL so a quoted
+ * video that appears in both root and follow-up isn't analyzed twice.
+ * Exported for unit tests.
+ */
+export function collectVideoCandidates(thread: XThread): XMedia[] {
+  const posts: XPost[] = [thread.rootPost, ...thread.authorPosts];
+  const seen = new Set<string>();
+  const out: XMedia[] = [];
+  for (const p of posts) {
+    for (const m of p.media) {
+      if (m.type !== 'video') continue;
+      if (seen.has(m.url)) continue;
+      seen.add(m.url);
+      out.push(m);
+    }
+  }
+  return out;
 }

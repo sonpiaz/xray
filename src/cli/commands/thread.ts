@@ -14,6 +14,7 @@ export type ThreadCmdOptions = {
   depth?: number | string;
   maxReplies?: number | string;
   deep?: boolean;
+  video?: boolean;
 };
 
 export async function threadCommand(url: string, opts: ThreadCmdOptions): Promise<void> {
@@ -49,6 +50,7 @@ export async function threadCommand(url: string, opts: ThreadCmdOptions): Promis
     research_opts.maxReplies = n;
   }
   if (opts.deep) research_opts.deep = true;
+  if (opts.video) research_opts.video = true;
 
   try {
     const report = await research(url, research_opts);
