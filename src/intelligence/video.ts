@@ -36,6 +36,8 @@ import {
 import { type AnalyzeFramesResult, DEFAULT_VISION_MODEL, analyzeFrames } from '../video/vision.ts';
 
 const SYNTHESIS_COST_USD = 0.02;
+/** Spec §8.2 — WARN when video duration exceeds this threshold. */
+const LONG_VIDEO_THRESHOLD_MS = 10 * 60 * 1000;
 
 /**
  * Options surface mirrors the spec §3 CLI surface so P2.3 can pipe flags
@@ -223,6 +225,15 @@ export async function analyzeVideo(
         downloadedPath = download.filePath;
         durationMs ??= download.durationMs;
         detectedPlatform = download.platform;
+        // Spec §8.2: WARN on long videos. Informational only — pipeline
+        // continues. Threshold is 10 minutes per the spec.
+        if (durationMs !== undefined && durationMs > LONG_VIDEO_THRESHOLD_MS) {
+          logger.warn('large video detected', {
+            durationMs,
+            durationFormatted: formatDuration(durationMs),
+            url,
+          });
+        }
         _orchestratorDeps.recordVideoFile({
           urlCanonical,
           filePath: download.filePath,
@@ -302,6 +313,12 @@ export async function analyzeVideo(
           });
           transcript = tx.transcript;
           cost.transcription = tx.estimatedCostUsd;
+          logger.debug('video cost', {
+            stage: 'transcribe',
+            costUsd: tx.estimatedCostUsd,
+            durationSec: tx.durationSec,
+            cached: tx.cached,
+          });
           if (tx.transcript.empty) {
             errors.push('Transcription returned empty text (non-speech audio)');
             partial = true;
@@ -346,6 +363,12 @@ export async function analyzeVideo(
             ...(transcript ? { transcript } : {}),
           });
           cost.vision = visionResult.estimatedCostUsd;
+          logger.debug('video cost', {
+            stage: 'vision',
+            costUsd: visionResult.estimatedCostUsd,
+            frames: visionResult.analyses.length,
+            cached: visionResult.cached,
+          });
           if (framesOut) {
             framesOut.analyses = visionResult.analyses;
           }
@@ -409,6 +432,11 @@ export async function analyzeVideo(
           model: opts.synthesisModel,
         });
         cost.synthesis = SYNTHESIS_COST_USD;
+        logger.debug('video cost', {
+          stage: 'synthesis',
+          costUsd: SYNTHESIS_COST_USD,
+          model: opts.synthesisModel ?? cfg.kyma.model,
+        });
       } catch (err) {
         errors.push(`synthesis: ${String(err)}`);
         partial = true;
@@ -424,6 +452,7 @@ export async function analyzeVideo(
     const estimatedCostUsd = round4(
       (cost.transcription ?? 0) + (cost.vision ?? 0) + (cost.synthesis ?? 0),
     );
+    logger.debug('video cost', { stage: 'total', costUsd: estimatedCostUsd, breakdown: cost });
 
     const report: VideoReport = {
       url,
@@ -467,13 +496,18 @@ type SynthesisInput = {
   model?: string;
 };
 
-async function runSynthesis(input: {
+/**
+ * Pure helper — assembles the user prompt sent to the synthesis chat
+ * call. Exported so unit tests can pin the prompt format down without
+ * making a network round-trip. Keep this in lock-step with the JSON
+ * shape `runSynthesis()` expects back.
+ */
+export function buildSynthesisPrompt(input: {
   transcript: Transcript;
   visionAnalyses: Array<{ timestampMs: number; description: string }>;
   visualSummary?: string;
   durationMs?: number;
-  model?: string | undefined;
-}): Promise<SynthesisJson> {
+}): string {
   const transcriptBlock = input.transcript.segments.length
     ? input.transcript.segments
         .map((s) => `[${formatTime(s.startMs)}-${formatTime(s.endMs)}] ${s.text}`)
@@ -486,7 +520,7 @@ async function runSynthesis(input: {
         .join('\n')
     : '(no frame descriptions)';
 
-  const userPrompt = [
+  return [
     '## Transcript',
     transcriptBlock,
     '',
@@ -510,6 +544,21 @@ async function runSynthesis(input: {
     'Produce 3-8 keyMoments. Use millisecond timestamps consistent with the transcript segments above.',
     'Respond with strict JSON only.',
   ].join('\n');
+}
+
+/**
+ * Synthesis stage — combines transcript + frame descriptions into a
+ * structured JSON analysis via Kyma chat. Exported so unit tests can
+ * verify prompt assembly without round-tripping through `analyzeVideo`.
+ */
+export async function runSynthesis(input: {
+  transcript: Transcript;
+  visionAnalyses: Array<{ timestampMs: number; description: string }>;
+  visualSummary?: string;
+  durationMs?: number;
+  model?: string | undefined;
+}): Promise<SynthesisJson> {
+  const userPrompt = buildSynthesisPrompt(input);
 
   const chatOpts: Parameters<typeof chat>[0] = {
     messages: [

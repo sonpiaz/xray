@@ -1,6 +1,7 @@
 import type { XComment } from '../models/comment.ts';
 import type { XPost } from '../models/post.ts';
 import type { ResearchReport } from '../models/report.ts';
+import { renderVideoMarkdown } from './video-markdown.ts';
 
 function fmtNum(n: number | undefined): string {
   if (n === undefined) return '?';
@@ -100,6 +101,25 @@ export function renderReportMarkdown(report: ResearchReport): string {
       );
     }
     out.push('');
+  }
+
+  // P2.3 — Video Analysis section. Rendered only when `--video` / `video: true`
+  // ran AND at least one video was detected on the root or author follow-ups.
+  // Embedded mode means each video block uses `## Video Analysis` headings so
+  // multiple videos stack cleanly. Failures still ship as a `partial: true`
+  // VideoReport with errors[] populated — surfaced via the `> ⚠ Partial`
+  // line inside renderVideoMarkdown.
+  if (report.videoAnalysis && report.videoAnalysis.length > 0) {
+    for (let i = 0; i < report.videoAnalysis.length; i++) {
+      const vr = report.videoAnalysis[i];
+      if (!vr) continue;
+      const label =
+        report.videoAnalysis.length > 1
+          ? `Video ${i + 1} of ${report.videoAnalysis.length}`
+          : undefined;
+      out.push(renderVideoMarkdown(vr, label ? { mode: 'embedded', label } : { mode: 'embedded' }));
+      out.push('');
+    }
   }
 
   if (report.keyInsights.length > 0) {
