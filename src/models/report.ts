@@ -36,6 +36,9 @@ export const ThreadCoverageSchema = z.object({
   prefilterApplied: z.boolean().optional(),
   candidatePool: z.number().int().nonnegative().optional(),
   classifiedFromPool: z.number().int().nonnegative().optional(),
+  // P1.5.0 — which escalation tier produced this data. Optional so P0/P1 outputs
+  // without tier still parse. P1.5.2 will populate this for every fetch path.
+  tier: z.enum(['ssr', 'anon', 'cookie', 'auth']).optional(),
 });
 export type ThreadCoverage = z.infer<typeof ThreadCoverageSchema>;
 
