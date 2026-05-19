@@ -1,6 +1,7 @@
 import { cac } from 'cac';
 import { XRayError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
+import { articleCommand } from './commands/article.ts';
 import { authCommand } from './commands/auth.ts';
 import { cacheClearCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -44,6 +45,20 @@ export async function runCli(argv: string[]): Promise<number> {
     .option('--frames <n>', 'Fix the frame count (1-24, default: scene-detect with 4-12 clamp)')
     .action(async (url: string, opts: Parameters<typeof videoCommand>[1]) => {
       await videoCommand(url, opts);
+    });
+
+  cli
+    .command(
+      'article <url>',
+      'Analyze an article URL (P3.0: X Article only; external HTML lands in P3.1)',
+    )
+    .option('--json', 'Output JSON instead of Markdown')
+    .option('-o, --output <path>', 'Write output to a file')
+    .option('--no-cache', 'Skip the local cache for body + summary')
+    .option('--raw', 'Skip LLM summarization; emit extracted body only')
+    .option('--model <name>', 'Override Kyma summarization model')
+    .action(async (url: string, opts: Parameters<typeof articleCommand>[1]) => {
+      await articleCommand(url, opts);
     });
 
   cli
