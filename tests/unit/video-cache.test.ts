@@ -172,6 +172,7 @@ import type { Transcript } from '../../src/models/video-report.ts';
 import {
   _setDbModuleForTests,
   clearVideoCache,
+  defaultVideoCacheMaxBytes,
   evictVideoFilesLRU,
   getCachedTranscript,
   getCachedVideoFile,
@@ -916,6 +917,41 @@ describe('analyzeVideo URL-level cache integration', () => {
     await analyzeVideo(url, { cleanup: false });
     expect(downloadSpy).not.toHaveBeenCalled();
     expect(existsSync(filePath)).toBe(true);
+  });
+});
+
+describe('defaultVideoCacheMaxBytes (XRAY_VIDEO_CACHE_MAX_GB env var)', () => {
+  const ORIG = process.env.XRAY_VIDEO_CACHE_MAX_GB;
+  afterEach(() => {
+    if (ORIG === undefined) delete process.env.XRAY_VIDEO_CACHE_MAX_GB;
+    else process.env.XRAY_VIDEO_CACHE_MAX_GB = ORIG;
+  });
+
+  it('returns 5 GB when env var unset', () => {
+    delete process.env.XRAY_VIDEO_CACHE_MAX_GB;
+    expect(defaultVideoCacheMaxBytes()).toBe(5 * 1_000_000_000);
+  });
+
+  it('honours valid override', () => {
+    process.env.XRAY_VIDEO_CACHE_MAX_GB = '20';
+    expect(defaultVideoCacheMaxBytes()).toBe(20 * 1_000_000_000);
+  });
+
+  it('accepts fractional gigabytes', () => {
+    process.env.XRAY_VIDEO_CACHE_MAX_GB = '2.5';
+    expect(defaultVideoCacheMaxBytes()).toBe(2_500_000_000);
+  });
+
+  it('falls back to 5 GB on unparseable input', () => {
+    process.env.XRAY_VIDEO_CACHE_MAX_GB = 'wat';
+    expect(defaultVideoCacheMaxBytes()).toBe(5 * 1_000_000_000);
+  });
+
+  it('falls back to 5 GB on non-positive numbers', () => {
+    process.env.XRAY_VIDEO_CACHE_MAX_GB = '0';
+    expect(defaultVideoCacheMaxBytes()).toBe(5 * 1_000_000_000);
+    process.env.XRAY_VIDEO_CACHE_MAX_GB = '-3';
+    expect(defaultVideoCacheMaxBytes()).toBe(5 * 1_000_000_000);
   });
 });
 

@@ -286,12 +286,32 @@ export function recordVideoFile(args: {
 }
 
 /**
+ * Default cache cap = 5 GB. Covers power users analyzing 50-150 videos
+ * before churn kicks in; small enough to stay polite on consumer Macs.
+ *
+ * Override with `XRAY_VIDEO_CACHE_MAX_GB` env var (any positive number,
+ * e.g. `XRAY_VIDEO_CACHE_MAX_GB=20` for 20 GB). Falls back to 5 if unset
+ * or unparseable. Bumped from the original arbitrary 1 GB after Son
+ * pushed back on 2026-05-19: 1 GB ≈ 10-30 mp4s which is too tight for
+ * a research tool. Note: mp4 files are recoverable (download is
+ * reversible) but transcript + vision results live in SQLite separately
+ * and survive eviction — so a larger cap just means fewer re-downloads
+ * on hot URLs.
+ */
+export function defaultVideoCacheMaxBytes(): number {
+  const raw = process.env.XRAY_VIDEO_CACHE_MAX_GB?.trim();
+  if (!raw) return 5 * 1_000_000_000;
+  const gb = Number.parseFloat(raw);
+  if (!Number.isFinite(gb) || gb <= 0) return 5 * 1_000_000_000;
+  return Math.floor(gb * 1_000_000_000);
+}
+
+/**
  * LRU eviction — delete the oldest-accessed video files until the total
  * on-disk byte count is ≤ `maxBytes`. Returns the count + bytes freed.
  *
- * Default cap is 1 GB per spec §9.4. We do NOT enforce a 10% buffer here
- * — callers invoke this immediately after a successful download, so the
- * single-pass "trim down to maxBytes" behavior is sufficient.
+ * Default cap reads `XRAY_VIDEO_CACHE_MAX_GB` env var (default 5 GB).
+ * Callers invoke this immediately after a successful download.
  *
  * **Concurrency note:** Two concurrent `xray video` runs racing on the
  * same machine could each evict files the other just wrote (TOCTOU on
@@ -299,7 +319,7 @@ export function recordVideoFile(args: {
  * are rare and the worst-case is one extra re-download. A real fix
  * would require per-machine SQLite advisory locks (BEGIN IMMEDIATE).
  */
-export function evictVideoFilesLRU(maxBytes = 1_000_000_000): {
+export function evictVideoFilesLRU(maxBytes = defaultVideoCacheMaxBytes()): {
   evicted: number;
   freedBytes: number;
 } {

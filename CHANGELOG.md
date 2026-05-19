@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Video understanding pipeline (Phase 2).** Analyze X-native videos + YouTube + TikTok + Vimeo + LinkedIn with full transcript (Whisper-large-v3-turbo), hybrid scene-detect frame extraction, batched Kyma vision, and structured synthesis. Every report ships with `transcript`, `frames.analyses[]`, `keyMoments[]`, `visualContext[]`, `summary`, and `topic`.
 - **`xray video <url>` standalone command** for direct video analysis. Flags: `--json`, `-o <path>`, `--no-cache`, `--raw`, `--model <name>`, `--frames <n>`.
-- **`xray_video` MCP tool** for agent callers. Returns a `VideoReport` as both `structuredContent` and Markdown.
+- **`xray_video` MCP tool** for agent callers. Returns a `VideoReport` as both `structuredContent` and Markdown. **Default skips XRay-side Kyma synthesis** — caller agents (Grok/Claude) typically summarise better with their own context. Set `synthesize: true` if you want a pre-built summary (~$0.02/video). CLI `xray video` keeps synthesis on by default for human readers.
 - **`--video` flag on `xray thread`** to embed video analysis when the root post or author follow-ups contain `type === 'video'` media. Capped at 3 videos per thread to avoid runaway cost. Failures degrade into `warnings[]`; the rest of the report still ships.
 - **`ResearchReport.videoAnalysis: VideoReport[]`** optional field — populated when `--video` runs and at least one video is detected.
 - **Markdown video section** embedded into `xray thread` output (and full standalone document for `xray video`). Renders `Source`, `Duration`, `Estimated cost`, `Summary`, `Key Moments`, `Visual Context`, and a truncated `Transcript` excerpt.
-- **LRU video cache** at `~/.xray/cache/video/` with 1 GB cap; transcript + vision results cached by canonical URL.
+- **LRU video cache** at `~/.xray/cache/video/`, default 5 GB cap (configurable via `XRAY_VIDEO_CACHE_MAX_GB` env var). Transcript + vision results cached separately in SQLite by canonical URL and SURVIVE mp4 eviction — re-runs hit the intelligence cache without re-downloading.
 - **Per-video cost surfacing** via `estimatedCostUsd` + `costBreakdown` fields on every `VideoReport`. Debug-level per-stage cost logs (`stage: transcribe|vision|synthesis|total`). WARN-level log when a downloaded video exceeds 10 minutes.
 
 ### Changed

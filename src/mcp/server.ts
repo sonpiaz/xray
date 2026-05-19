@@ -58,8 +58,13 @@ const VideoInput = {
     .boolean()
     .optional()
     .describe('Skip the video cache (re-download, re-transcribe, re-analyze).'),
-  raw: z.boolean().optional().describe('Skip LLM synthesis; return transcript + frames only.'),
-  model: z.string().optional().describe('Override Kyma synthesis model.'),
+  synthesize: z
+    .boolean()
+    .optional()
+    .describe(
+      'Run XRay-side Kyma synthesis (topic/keyMoments/summary). DEFAULT FALSE for MCP — caller agent typically synthesises better with its own context. Set true if you want a pre-built summary and accept the ~$0.02/video cost.',
+    ),
+  model: z.string().optional().describe('Override Kyma synthesis model (only used if synthesize=true).'),
   format: z
     .enum(['markdown', 'json', 'both'])
     .optional()
@@ -133,7 +138,9 @@ export async function startMcpServer(): Promise<void> {
       try {
         const opts: VideoAnalyzeOptions = {};
         if (args.noCache) opts.noCache = true;
-        if (args.raw) opts.raw = true;
+        // MCP default: skip synthesis (agent caller has its own summarisation).
+        // Caller opts in via synthesize=true if they want our Kyma synthesis.
+        if (!args.synthesize) opts.raw = true;
         if (args.model) opts.synthesisModel = args.model;
 
         const report = await analyzeVideo(args.url, opts);
