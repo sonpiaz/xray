@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { request } from 'undici';
 import { VideoDownloadError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
 import type { XMedia } from '../models/media.ts';
 import type { VideoSource } from '../models/video-report.ts';
+import { videoFileDir } from './cache.ts';
 import { assertFfmpeg, assertYtDlp, checkDependencies } from './dependencies.ts';
 import { SUPPORTED_PLATFORMS_LABEL, detectPlatform } from './platforms.ts';
 import { runProcess } from './proc.ts';
@@ -28,12 +28,20 @@ export type DownloadResult = {
 };
 
 export type DownloadOptions = {
-  /** Override temp dir. Defaults to {tmpdir}/xray-video. */
+  /** Override temp dir. Defaults to {XRAY_HOME}/cache/video/x-native. */
   tmpDir?: string;
   /** Hard wall-clock timeout for the download. Defaults to 120s. */
   timeoutMs?: number;
   /** User-Agent string. X CDN serves mp4 to any standard browser UA. */
   userAgent?: string;
+  /**
+   * P2.2 — explicit destination path. When set the file is written here
+   * rather than the default `tmpDir/{urlHash}.mp4` location. The
+   * orchestrator uses this to land files at deterministic
+   * `{XRAY_HOME}/cache/video/{platform}/{canonicalHash}.mp4` paths so the
+   * LRU index can find them on the next run.
+   */
+  destPath?: string;
 };
 
 const DEFAULT_UA =
@@ -58,14 +66,20 @@ export async function downloadXNativeVideo(
   const deps = await checkDependencies();
   assertFfmpeg(deps);
 
-  const tmpRoot = opts.tmpDir ?? join(tmpdir(), 'xray-video');
-  mkdirSync(tmpRoot, { recursive: true });
-
-  // Stable-ish filename keyed by URL hash so concurrent calls on the same
-  // video don't clobber each other. We don't reuse across runs in P2.0 —
-  // caching is P2.2's job.
-  const urlHash = createHash('sha256').update(media.url).digest('hex').slice(0, 16);
-  const filePath = join(tmpRoot, `xray-video-${urlHash}.mp4`);
+  // P2.2 — default destination is the LRU-tracked cache dir; tests + the
+  // legacy callers still pass `tmpDir` explicitly. When `destPath` is set
+  // it wins, so the orchestrator can pin files at the canonical-URL hash
+  // path (cache layer key) rather than the raw-CDN-URL hash.
+  let filePath: string;
+  if (opts.destPath) {
+    mkdirSync(dirname(opts.destPath), { recursive: true });
+    filePath = opts.destPath;
+  } else {
+    const tmpRoot = opts.tmpDir ?? videoFileDir('x-native');
+    mkdirSync(tmpRoot, { recursive: true });
+    const urlHash = createHash('sha256').update(media.url).digest('hex').slice(0, 16);
+    filePath = join(tmpRoot, `xray-video-${urlHash}.mp4`);
+  }
 
   const timeoutMs = opts.timeoutMs ?? 120_000;
   const ua = opts.userAgent ?? DEFAULT_UA;
@@ -148,12 +162,19 @@ export type DownloadVideoOptions = {
    * GraphQL response, pass it here to skip yt-dlp entirely. Optional.
    */
   mediaHint?: XMedia;
-  /** Output directory for yt-dlp downloads. Defaults to {tmpdir}/xray-video. */
+  /** Output directory for yt-dlp downloads. Defaults to {XRAY_HOME}/cache/video/{platform}. */
   outputDir?: string;
   /** Override the yt-dlp invocation timeout. */
   timeoutMs?: number;
   /** Test seam — forwarded to the yt-dlp wrapper. */
   ytDlpSpawn?: YtDlpDownloadOptions['spawn'];
+  /**
+   * P2.2 — pin the X-native download to an exact path (used by the
+   * orchestrator when seeding the LRU cache with a canonical-URL key).
+   * Only honored on the X-native shortcut; the yt-dlp path always uses
+   * `outputDir/%(id)s.%(ext)s` because yt-dlp picks the filename.
+   */
+  destPath?: string;
 };
 
 export type VideoDownloadResult = {
@@ -173,9 +194,10 @@ export async function downloadVideo(opts: DownloadVideoOptions): Promise<VideoDo
 
   // Path 1: X-native with a parsed media hint → direct CDN fetch (skip yt-dlp).
   if (platform === 'x-native' && opts.mediaHint && opts.mediaHint.type === 'video') {
-    const res = await downloadXNativeVideo(opts.mediaHint, {
-      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
-    });
+    const xnativeOpts: DownloadOptions = {};
+    if (opts.timeoutMs !== undefined) xnativeOpts.timeoutMs = opts.timeoutMs;
+    if (opts.destPath !== undefined) xnativeOpts.destPath = opts.destPath;
+    const res = await downloadXNativeVideo(opts.mediaHint, xnativeOpts);
     return {
       filePath: res.filePath,
       source: 'x-native',
@@ -199,7 +221,7 @@ export async function downloadVideo(opts: DownloadVideoOptions): Promise<VideoDo
   const deps = await checkDependencies({ needYtDlp: true });
   assertYtDlp(deps);
 
-  const baseDir = opts.outputDir ?? join(tmpdir(), 'xray-video');
+  const baseDir = opts.outputDir ?? videoFileDir(platform);
   // Per-download subdir keyed by URL hash so concurrent calls on different
   // URLs don't collide on the same `{id}.mp4` (yt-dlp resolves output
   // by remote id, but the same id can repeat across platforms — e.g.
