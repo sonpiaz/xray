@@ -2,6 +2,16 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 
+// Parse env-style booleans: "true"/"1" → true, "false"/"0"/"" → false.
+// `z.coerce.boolean()` treats any non-empty string as truthy, so "false" becomes true — avoid it.
+function envBool(raw: string | undefined, fallback: boolean): boolean {
+  if (raw === undefined) return fallback;
+  const v = raw.trim().toLowerCase();
+  if (v === 'true' || v === '1' || v === 'yes') return true;
+  if (v === 'false' || v === '0' || v === 'no' || v === '') return false;
+  return fallback;
+}
+
 const ConfigSchema = z.object({
   kyma: z.object({
     url: z.string().url().default('https://kymaapi.com/v1'),
@@ -15,7 +25,7 @@ const ConfigSchema = z.object({
   fetcher: z.object({
     mode: z.enum(['auto', 'anon', 'auth']).default('auto'),
     timeoutMs: z.coerce.number().int().positive().default(30_000),
-    headless: z.coerce.boolean().default(true),
+    headless: z.boolean().default(true),
     storageStatePath: z.string(),
   }),
   log: z.object({
@@ -47,7 +57,7 @@ export function loadConfig(): XRayConfig {
     fetcher: {
       mode: process.env.XRAY_FETCH_MODE,
       timeoutMs: process.env.XRAY_FETCH_TIMEOUT_MS,
-      headless: process.env.XRAY_HEADLESS,
+      headless: envBool(process.env.XRAY_HEADLESS, true),
       storageStatePath,
     },
     log: {
