@@ -7,8 +7,10 @@ import { VideoDownloadError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
 import type { XMedia } from '../models/media.ts';
 import type { VideoSource } from '../models/video-report.ts';
-import { assertFfmpeg, checkDependencies } from './dependencies.ts';
+import { assertFfmpeg, assertYtDlp, checkDependencies } from './dependencies.ts';
+import { SUPPORTED_PLATFORMS_LABEL, detectPlatform } from './platforms.ts';
 import { runProcess } from './proc.ts';
+import { type YtDlpDownloadOptions, downloadViaYtDlp } from './ytdlp.ts';
 
 /**
  * P2.0 — X-native only. P2.1 will extend this module with platform
@@ -119,6 +121,111 @@ export async function downloadXNativeVideo(
     ...(durationMs !== undefined ? { durationMs } : {}),
     platform: 'x-native',
     sourceUrl: media.url,
+  };
+}
+
+/**
+ * P2.1 — Top-level platform-routing download entry point.
+ *
+ * Routing decisions (in order):
+ *  1. URL is an X post AND a parsed `mediaHint` of type 'video' is
+ *     provided → direct undici fetch of the CDN mp4 (fastest, no yt-dlp).
+ *  2. URL is an X post WITHOUT a mediaHint (SSR fallback) → yt-dlp.
+ *  3. URL is YouTube / TikTok / Vimeo / LinkedIn → yt-dlp.
+ *  4. Host is unknown → throw `VideoDownloadError` listing supported
+ *     platforms.
+ *
+ * The X-native + mediaHint shortcut is important because it avoids a yt-dlp
+ * dependency for the most common case (X threads with native video). The
+ * orchestrator in `intelligence/video.ts` should always pass `mediaHint`
+ * when it has one from `parser.ts`.
+ */
+export type DownloadVideoOptions = {
+  /** Raw URL the user supplied. Used for platform detection. */
+  url: string;
+  /**
+   * When the caller has already parsed an `XMedia` of type 'video' from a
+   * GraphQL response, pass it here to skip yt-dlp entirely. Optional.
+   */
+  mediaHint?: XMedia;
+  /** Output directory for yt-dlp downloads. Defaults to {tmpdir}/xray-video. */
+  outputDir?: string;
+  /** Override the yt-dlp invocation timeout. */
+  timeoutMs?: number;
+  /** Test seam — forwarded to the yt-dlp wrapper. */
+  ytDlpSpawn?: YtDlpDownloadOptions['spawn'];
+};
+
+export type VideoDownloadResult = {
+  filePath: string;
+  source: VideoSource;
+  /** Same as `source` — kept for forward-compat with reports. */
+  platform: VideoSource;
+  sizeBytes: number;
+  durationMs?: number;
+  title?: string;
+  /** The URL that was actually downloaded from (may differ from the input). */
+  sourceUrl: string;
+};
+
+export async function downloadVideo(opts: DownloadVideoOptions): Promise<VideoDownloadResult> {
+  const platform = detectPlatform(opts.url);
+
+  // Path 1: X-native with a parsed media hint → direct CDN fetch (skip yt-dlp).
+  if (platform === 'x-native' && opts.mediaHint && opts.mediaHint.type === 'video') {
+    const res = await downloadXNativeVideo(opts.mediaHint, {
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    });
+    return {
+      filePath: res.filePath,
+      source: 'x-native',
+      platform: 'x-native',
+      sizeBytes: res.sizeBytes,
+      ...(res.durationMs !== undefined ? { durationMs: res.durationMs } : {}),
+      sourceUrl: res.sourceUrl,
+    };
+  }
+
+  // Path 4: unknown platform → fail with the supported-list hint.
+  if (platform === null) {
+    throw new VideoDownloadError(
+      `Unsupported video URL: ${opts.url}. Supported platforms: ${SUPPORTED_PLATFORMS_LABEL}.`,
+    );
+  }
+
+  // Paths 2 + 3: anything left routes through yt-dlp. Check the binary
+  // exists before spawning so we can throw a DependencyError (with the
+  // canonical install hint) instead of a generic ENOENT.
+  const deps = await checkDependencies({ needYtDlp: true });
+  assertYtDlp(deps);
+
+  const baseDir = opts.outputDir ?? join(tmpdir(), 'xray-video');
+  // Per-download subdir keyed by URL hash so concurrent calls on different
+  // URLs don't collide on the same `{id}.mp4` (yt-dlp resolves output
+  // by remote id, but the same id can repeat across platforms — e.g.
+  // YouTube's 11-char base64 id space).
+  const urlHash = createHash('sha256').update(opts.url).digest('hex').slice(0, 16);
+  const outDir = join(baseDir, urlHash);
+  mkdirSync(outDir, { recursive: true });
+
+  logger.debug('download via yt-dlp', { url: opts.url, platform, outDir });
+
+  const ytOpts: YtDlpDownloadOptions = {
+    outputDir: outDir,
+    platform,
+    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    ...(opts.ytDlpSpawn !== undefined ? { spawn: opts.ytDlpSpawn } : {}),
+  };
+
+  const res = await downloadViaYtDlp(opts.url, ytOpts);
+  return {
+    filePath: res.filePath,
+    source: platform,
+    platform,
+    sizeBytes: res.sizeBytes,
+    ...(res.durationMs !== undefined ? { durationMs: res.durationMs } : {}),
+    ...(res.title !== undefined ? { title: res.title } : {}),
+    sourceUrl: opts.url,
   };
 }
 

@@ -13,7 +13,7 @@ import {
   VideoReportSchema,
 } from '../models/video-report.ts';
 import { extractAudio } from '../video/audio.ts';
-import { downloadXNativeVideo } from '../video/download.ts';
+import { type VideoDownloadResult, downloadVideo } from '../video/download.ts';
 import { type ExtractFramesResult, type ExtractedFrame, extractFrames } from '../video/frames.ts';
 import { type TranscribeResult, transcribeAudio } from '../video/transcribe.ts';
 import { type AnalyzeFramesResult, analyzeFrames } from '../video/vision.ts';
@@ -58,22 +58,26 @@ type SynthesisJson = {
 };
 
 /**
- * Drive the full X-native video pipeline: download → audio + frames →
+ * Drive the full video pipeline: download → audio + frames →
  * transcribe + vision → synthesis. Each stage's failure is captured into
  * the partial report rather than thrown — the caller always gets a
  * `VideoReport` they can render.
  *
- * Caller passes an `XMedia` of type 'video' (already parsed from the X
- * GraphQL response by `parseMedia()`). P2.1 will add a higher-level
- * `analyzeVideoUrl(url)` that handles platform detection + yt-dlp.
+ * P2.0 took an `XMedia`. P2.1 widens the input to also accept a raw URL
+ * string (or `{ url, mediaHint }`) so the standalone `xray video <url>`
+ * code path can drive the pipeline without an XMedia. Platform detection
+ * + yt-dlp routing happens inside `downloadVideo()`.
+ *
+ * Backward compatibility: existing callers that pass an `XMedia` object
+ * still work — we synthesize a `{ url, mediaHint }` from it.
  */
+export type AnalyzeVideoInput = XMedia | string | { url: string; mediaHint?: XMedia };
+
 export async function analyzeVideo(
-  media: XMedia,
+  input: AnalyzeVideoInput,
   opts: VideoAnalyzeOptions = {},
 ): Promise<VideoReport> {
-  if (media.type !== 'video') {
-    throw new Error(`analyzeVideo requires media.type === 'video', got '${media.type}'`);
-  }
+  const { url, mediaHint } = normalizeAnalyzeInput(input);
 
   const cfg = loadConfig();
   const cleanup = opts.cleanup ?? true;
@@ -91,12 +95,16 @@ export async function analyzeVideo(
   let framesOut: VideoFrames | undefined;
   let extractedFrames: ExtractedFrame[] = [];
   let visualSummary: string | undefined;
+  let detectedPlatform: VideoDownloadResult['platform'] = 'x-native';
 
   try {
-    // ─── Stage 1: download ──────────────────────────────────────────
-    const download = await downloadXNativeVideo(media);
+    // ─── Stage 1: download (X-native direct OR yt-dlp by platform) ──
+    const downloadOpts: Parameters<typeof downloadVideo>[0] = { url };
+    if (mediaHint) downloadOpts.mediaHint = mediaHint;
+    const download = await downloadVideo(downloadOpts);
     downloadedPath = download.filePath;
     durationMs = download.durationMs;
+    detectedPlatform = download.platform;
 
     // ─── Stage 2 + 4 in parallel: audio extract + frame extract ────
     const audioPromise = extractAudio(download.filePath).catch((err) => {
@@ -222,8 +230,8 @@ export async function analyzeVideo(
     );
 
     const report: VideoReport = {
-      url: media.url,
-      platform: 'x-native',
+      url,
+      platform: detectedPlatform,
       ...(durationMs !== undefined ? { durationMs } : {}),
       ...(durationMs !== undefined ? { durationFormatted: formatDuration(durationMs) } : {}),
       ...(transcript ? { transcript } : {}),
@@ -327,6 +335,30 @@ async function runSynthesis(input: {
   } catch (err) {
     throw new Error(`synthesis JSON parse failed: ${String(err)}`);
   }
+}
+
+/**
+ * Pure helper — accept either an `XMedia`, a raw URL string, or a struct
+ * with `url` + optional `mediaHint`, and return a normalized
+ * `{ url, mediaHint }` for the download stage. Exported for unit tests.
+ */
+export function normalizeAnalyzeInput(input: AnalyzeVideoInput): {
+  url: string;
+  mediaHint?: XMedia;
+} {
+  if (typeof input === 'string') {
+    return { url: input };
+  }
+  // XMedia has `type` + `url`; the option struct has only `url`.
+  if ('type' in input) {
+    if (input.type !== 'video') {
+      throw new Error(`analyzeVideo requires media.type === 'video', got '${input.type}'`);
+    }
+    return { url: input.url, mediaHint: input };
+  }
+  const out: { url: string; mediaHint?: XMedia } = { url: input.url };
+  if (input.mediaHint) out.mediaHint = input.mediaHint;
+  return out;
 }
 
 /** Pure helper — exported for unit tests. */
