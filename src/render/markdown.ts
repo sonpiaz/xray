@@ -1,3 +1,4 @@
+import type { XComment } from '../models/comment.ts';
 import type { XPost } from '../models/post.ts';
 import type { ResearchReport } from '../models/report.ts';
 
@@ -15,6 +16,42 @@ function postById(report: ResearchReport, id: string): XPost | undefined {
     report.thread.quoteTweets.find((p) => p.id === id) ??
     report.thread.comments.find((p) => p.id === id)
   );
+}
+
+/**
+ * Flatten reply tree to a single array (DFS). Local copy of the helper in
+ * `src/intelligence/classify.ts` — duplicated here to keep the renderer
+ * free of intelligence-layer imports (renderer is a leaf module).
+ */
+function flattenComments(comments: XComment[]): XComment[] {
+  const out: XComment[] = [];
+  const walk = (list: XComment[]): void => {
+    for (const c of list) {
+      out.push(c);
+      if (c.replies.length > 0) walk(c.replies);
+    }
+  };
+  walk(comments);
+  return out;
+}
+
+function classifiedComments(report: ResearchReport): XComment[] {
+  return flattenComments(report.thread.comments).filter((c) => c.classification);
+}
+
+function renderReplyLine(c: XComment): string[] {
+  const lines: string[] = [];
+  const cls = c.classification;
+  const handle = `@${c.author.handle}`;
+  const scoreLabel = cls ? cls.qualityScore.toFixed(2) : '—';
+  const stance = cls ? cls.stance : 'unknown';
+  const quality = cls ? cls.quality : '—';
+  lines.push(
+    `- **${handle}** — score **${scoreLabel}** · [${stance}] · ${quality} (♥${fmtNum(c.metrics.likes)})`,
+  );
+  const snippet = c.text.replace(/\s+/g, ' ').slice(0, 200);
+  lines.push(`  > _“${snippet}${c.text.length > 200 ? '…' : ''}”_`);
+  return lines;
 }
 
 export function renderReportMarkdown(report: ResearchReport): string {
@@ -99,6 +136,40 @@ export function renderReportMarkdown(report: ResearchReport): string {
     out.push('## Open Questions');
     for (const q of report.openQuestions) out.push(`- ${q}`);
     out.push('');
+  }
+
+  // P1.2: classification-derived sections. Both gated on `coverage` AND
+  // `stanceDistribution` presence so Phase 0 / no-Kyma outputs skip cleanly.
+  // Section ordering (after Conversation Analysis, before Source) is per
+  // PHASE_1_PLAN.md lines 696-722.
+  if (report.coverage && report.stanceDistribution) {
+    const classified = classifiedComments(report);
+    if (classified.length > 0) {
+      const top = [...classified]
+        .sort(
+          (a, b) => (b.classification?.qualityScore ?? 0) - (a.classification?.qualityScore ?? 0),
+        )
+        .slice(0, 5);
+      out.push('## Top Quality Replies');
+      for (const c of top) {
+        for (const line of renderReplyLine(c)) out.push(line);
+      }
+      out.push('');
+
+      const dissenting = classified
+        .filter((c) => c.classification?.stance === 'disagree')
+        .sort(
+          (a, b) => (b.classification?.qualityScore ?? 0) - (a.classification?.qualityScore ?? 0),
+        )
+        .slice(0, 3);
+      if (dissenting.length > 0) {
+        out.push('## Dissenting Views');
+        for (const c of dissenting) {
+          for (const line of renderReplyLine(c)) out.push(line);
+        }
+        out.push('');
+      }
+    }
   }
 
   out.push('## Source — Root Post');

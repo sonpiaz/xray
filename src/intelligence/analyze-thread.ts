@@ -93,12 +93,20 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
       stanceDistribution = computeStanceDistribution(thread);
     }
     if (coverage) {
-      coverage = { ...coverage, classifiedReplies: outcome.classifiedCount };
+      coverage = {
+        ...coverage,
+        classifiedReplies: outcome.classifiedCount,
+        prefilterApplied: outcome.prefilterApplied,
+        candidatePool: outcome.candidatePool,
+        classifiedFromPool: outcome.classifiedFromPool,
+      };
     }
     for (const w of outcome.warnings) partialWarnings.push(w);
     logger.debug('classification done', {
       classified: outcome.classifiedCount,
       calls: outcome.callCount,
+      prefilterApplied: outcome.prefilterApplied,
+      candidatePool: outcome.candidatePool,
     });
   }
 

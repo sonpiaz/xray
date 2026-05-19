@@ -14,7 +14,9 @@ import {
   classifyCacheKey,
   classifyComments,
   computeStanceDistribution,
+  engagementScore,
   flattenComments,
+  prefilterByEngagement,
 } from '../../src/intelligence/classify.ts';
 import { chat } from '../../src/kyma/client.ts';
 import {
@@ -114,15 +116,16 @@ describe('chunkForClassification', () => {
     expect(chunkForClassification(cs)).toHaveLength(1);
   });
 
-  it('splits at MAX_REPLIES_IN_PROMPT boundaries', () => {
+  it('caps at MAX_CLASSIFY_CALLS chunks — excess comments are skipped this run', () => {
+    // P1.2: MAX_CLASSIFY_CALLS = 1, so a 41-item input still returns 1 chunk of 40
+    // even though geometrically it could be 2. Callers must prefilter first.
     const cs = Array.from({ length: MAX_REPLIES_IN_PROMPT + 1 }, (_, i) => mkComment(String(i)));
     const chunks = chunkForClassification(cs);
-    expect(chunks).toHaveLength(2);
+    expect(chunks).toHaveLength(MAX_CLASSIFY_CALLS);
     expect(chunks[0]).toHaveLength(MAX_REPLIES_IN_PROMPT);
-    expect(chunks[1]).toHaveLength(1);
   });
 
-  it('caps total chunks at MAX_CLASSIFY_CALLS — excess comments are skipped this run', () => {
+  it('total chunked count never exceeds the shallow-mode call ceiling', () => {
     const total = MAX_REPLIES_IN_PROMPT * (MAX_CLASSIFY_CALLS + 1);
     const cs = Array.from({ length: total }, (_, i) => mkComment(String(i)));
     const chunks = chunkForClassification(cs);
@@ -192,7 +195,14 @@ describe('classifyComments — happy path', () => {
   it('returns zero-call outcome when the thread has no comments', async () => {
     const thread = mkThread([]);
     const outcome = await classifyComments(thread);
-    expect(outcome).toEqual({ classifiedCount: 0, callCount: 0, warnings: [] });
+    expect(outcome).toEqual({
+      classifiedCount: 0,
+      callCount: 0,
+      warnings: [],
+      prefilterApplied: false,
+      candidatePool: 0,
+      classifiedFromPool: 0,
+    });
     expect(mockChat).not.toHaveBeenCalled();
   });
 });
@@ -226,10 +236,10 @@ describe('classifyComments — error paths surface clearly', () => {
   });
 });
 
-describe('classifyComments — partial cap', () => {
-  it('warns when fetched count exceeds shallow-mode cap (no third Kyma call attempted)', async () => {
-    // Build a thread larger than the cap: cap = MAX_CLASSIFY_CALLS * MAX_REPLIES_IN_PROMPT
-    const total = MAX_CLASSIFY_CALLS * MAX_REPLIES_IN_PROMPT + 3;
+describe('classifyComments — partial cap (P1.2 prefilter)', () => {
+  it('classifies top MAX_REPLIES_IN_PROMPT by engagement and warns about the tail', async () => {
+    // Build a thread larger than a single batch: prefilter must trim to 40.
+    const total = MAX_REPLIES_IN_PROMPT + 7;
     const comments = Array.from({ length: total }, (_, i) => mkComment(`c${i}`));
     const thread = mkThread(comments);
 
@@ -240,9 +250,128 @@ describe('classifyComments — partial cap', () => {
     });
 
     const outcome = await classifyComments(thread);
-    // Two chunks dispatched, not three
+    // Single Kyma call (MAX_CLASSIFY_CALLS = 1 in shallow mode)
     expect(outcome.callCount).toBe(MAX_CLASSIFY_CALLS);
     expect(mockChat).toHaveBeenCalledTimes(MAX_CLASSIFY_CALLS);
-    expect(outcome.warnings.some((w) => w.includes('shallow-mode cap'))).toBe(true);
+    expect(outcome.prefilterApplied).toBe(true);
+    expect(outcome.candidatePool).toBe(total);
+    expect(outcome.warnings.some((w) => w.includes('shallow-mode prefilter'))).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// P1.2 — engagement pre-filter
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('engagementScore (P1.2)', () => {
+  it('computes likes + 2*replies + verified boost', () => {
+    const plain = mkComment('a', { metrics: { likes: 10 } });
+    expect(engagementScore(plain)).toBe(10);
+
+    const withReplies = mkComment('b', {
+      metrics: { likes: 10 },
+      replies: [mkComment('b1'), mkComment('b2')],
+    });
+    expect(engagementScore(withReplies)).toBe(10 + 2 * 2);
+
+    const verified = mkComment('c', { metrics: { likes: 10 } });
+    verified.author = { ...verified.author, verified: true };
+    expect(engagementScore(verified)).toBe(10 + 50);
+  });
+
+  it('treats missing likes as 0', () => {
+    const c = mkComment('a', { metrics: {} });
+    expect(engagementScore(c)).toBe(0);
+  });
+});
+
+describe('prefilterByEngagement (P1.2)', () => {
+  it('returns the input unchanged when length <= limit', () => {
+    const cs = Array.from({ length: 5 }, (_, i) => mkComment(`c${i}`, { metrics: { likes: i } }));
+    expect(prefilterByEngagement(cs, 10)).toBe(cs); // identity — no sort, no copy
+  });
+
+  it('orders by engagement score descending and trims to limit', () => {
+    const cs = [
+      mkComment('low', { metrics: { likes: 1 } }),
+      mkComment('mid', { metrics: { likes: 50 } }),
+      mkComment('high', { metrics: { likes: 200 } }),
+      mkComment('verifiedSmall', { metrics: { likes: 5 } }),
+      mkComment('noisy', { metrics: { likes: 0 } }),
+    ];
+    // Promote one entry via verified-author boost (+50) so it beats mid (50 ties → DFS order wins)
+    cs[3]!.author = { ...cs[3]!.author, verified: true };
+    const top3 = prefilterByEngagement(cs, 3);
+    expect(top3.map((c) => c.id)).toEqual(['high', 'verifiedSmall', 'mid']);
+  });
+
+  it('breaks ties by original DFS index (stable)', () => {
+    const cs = [
+      mkComment('first', { metrics: { likes: 10 } }),
+      mkComment('second', { metrics: { likes: 10 } }),
+      mkComment('third', { metrics: { likes: 10 } }),
+    ];
+    const top2 = prefilterByEngagement(cs, 2);
+    expect(top2.map((c) => c.id)).toEqual(['first', 'second']);
+  });
+});
+
+describe('classifyComments — prefilter integration (P1.2)', () => {
+  it('skips prefilter when fetched <= MAX_REPLIES_IN_PROMPT', async () => {
+    const cs = Array.from({ length: 5 }, (_, i) =>
+      mkComment(`c${i}`, { metrics: { likes: i * 10 } }),
+    );
+    const thread = mkThread(cs);
+    mockChat.mockResolvedValueOnce({
+      content: JSON.stringify({ classifications: [] }),
+      model: 'gemini-2.5-flash',
+      cached: false,
+    });
+    const outcome = await classifyComments(thread);
+    expect(outcome.prefilterApplied).toBe(false);
+    expect(outcome.candidatePool).toBe(5);
+    expect(outcome.warnings).toEqual([]);
+  });
+
+  it('passes the top-by-engagement batch to chat() when fetched > MAX_REPLIES_IN_PROMPT', async () => {
+    // 41 comments with engagement = idx; expect ids 40..1 (top 40 desc) to be in the prompt
+    const cs = Array.from({ length: MAX_REPLIES_IN_PROMPT + 1 }, (_, i) =>
+      mkComment(`c${i}`, { metrics: { likes: i } }),
+    );
+    const thread = mkThread(cs);
+    mockChat.mockResolvedValueOnce({
+      content: JSON.stringify({ classifications: [] }),
+      model: 'gemini-2.5-flash',
+      cached: false,
+    });
+    const outcome = await classifyComments(thread);
+    expect(mockChat).toHaveBeenCalledTimes(1);
+    expect(outcome.prefilterApplied).toBe(true);
+    expect(outcome.candidatePool).toBe(MAX_REPLIES_IN_PROMPT + 1);
+
+    const userMsg = mockChat.mock.calls[0]![0].messages[1]!.content as string;
+    // Highest-engagement id (c40) must be in the prompt; lowest (c0) must NOT.
+    expect(userMsg).toContain('id=c40');
+    expect(userMsg).not.toContain('id=c0 ');
+    // The batch cache key encodes the filtered ids, so it changes when prefilter selects a different set.
+    expect(mockChat.mock.calls[0]![0].cacheKey).toContain(
+      `comment-classify-batch:${CLASSIFY_VERSION}:`,
+    );
+  });
+
+  it('produces deterministic cache keys for the same filtered set', async () => {
+    const cs = Array.from({ length: MAX_REPLIES_IN_PROMPT + 2 }, (_, i) =>
+      mkComment(`c${i}`, { metrics: { likes: i } }),
+    );
+    mockChat.mockResolvedValue({
+      content: JSON.stringify({ classifications: [] }),
+      model: 'gemini-2.5-flash',
+      cached: false,
+    });
+    await classifyComments(mkThread(cs));
+    await classifyComments(mkThread(cs.slice())); // same set, fresh array
+    const key1 = mockChat.mock.calls[0]![0].cacheKey;
+    const key2 = mockChat.mock.calls[1]![0].cacheKey;
+    expect(key1).toBe(key2);
   });
 });

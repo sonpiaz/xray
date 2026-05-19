@@ -20,9 +20,13 @@ export const CLASSIFY_VERSION = 1;
 
 /**
  * Hard cap on classification calls per `research()` invocation.
- * Shallow mode budget is 1 thread analysis + up to 2 classification calls = 3 Kyma calls total.
+ *
+ * P1.2: dropped from 2 → 1. With the engagement pre-filter in front of the batch,
+ * one call covers the top MAX_REPLIES_IN_PROMPT (40) most-engaged replies — the
+ * tail of low-engagement comments isn't worth a second Kyma call in shallow mode.
+ * Deep mode (P1.3) gets its own per-subtree budget that bypasses this constant.
  */
-export const MAX_CLASSIFY_CALLS = 2;
+export const MAX_CLASSIFY_CALLS = 1;
 
 const ClassificationItemSchema = CommentClassificationSchema.extend({
   id: z.string(),
@@ -36,7 +40,65 @@ export type ClassifyOutcome = {
   classifiedCount: number;
   callCount: number;
   warnings: string[];
+  /**
+   * P1.2: prefilter telemetry. Populated when the engagement pre-filter ran
+   * (i.e., total fetched > MAX_REPLIES_IN_PROMPT). Folded into
+   * `coverage.prefilter*` fields by `research()`.
+   */
+  prefilterApplied: boolean;
+  candidatePool: number;
+  classifiedFromPool: number;
 };
+
+/**
+ * P1.2 engagement score used to rank candidate comments before the single
+ * shallow-mode classification call.
+ *
+ * Formula (intentionally simple — tune later from feedback):
+ *   likes + 2 * reply_count + (verified ? 50 : 0)
+ *
+ * Why this shape:
+ *  - `likes` is the cheapest proxy for "people thought this was useful".
+ *  - `reply_count` is weighted 2x because a comment that sparks a sub-thread
+ *    is a stronger conversational signal than a passive like.
+ *  - The +50 verified-author boost surfaces blue-check responses that often
+ *    get drowned by viral-but-shallow replies in the raw like ranking.
+ *
+ * We intentionally do NOT use views (often absent on nested replies) and
+ * keep weights small integers so the ordering is easy to reason about in
+ * logs and tests.
+ */
+export function engagementScore(c: XComment): number {
+  const likes = c.metrics.likes ?? 0;
+  const replyCount = c.replies.length;
+  const verifiedBoost = c.author.verified ? 50 : 0;
+  return likes + 2 * replyCount + verifiedBoost;
+}
+
+/**
+ * P1.2 engagement-based pre-filter. Sorts the flattened comment list by
+ * `engagementScore` descending and returns the top `limit` (defaults to
+ * MAX_REPLIES_IN_PROMPT).
+ *
+ * Stable-ish: ties are broken by original DFS position (we use a stable sort
+ * over an index-decorated array) so cache keys stay deterministic when two
+ * comments have identical engagement.
+ *
+ * Skipped by the caller when `comments.length <= limit` — there's no point
+ * sorting a list that fits in a single batch.
+ */
+export function prefilterByEngagement(
+  comments: XComment[],
+  limit: number = MAX_REPLIES_IN_PROMPT,
+): XComment[] {
+  if (comments.length <= limit) return comments;
+  const decorated = comments.map((c, idx) => ({ c, idx, score: engagementScore(c) }));
+  decorated.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.idx - b.idx; // stable: preserve DFS order on ties
+  });
+  return decorated.slice(0, limit).map((d) => d.c);
+}
 
 function stripJsonFence(s: string): string {
   const fence = s.match(/^```(?:json)?\s*([\s\S]*?)```$/);
@@ -61,10 +123,11 @@ export function flattenComments(comments: XComment[]): XComment[] {
 }
 
 /**
- * P1.1 chunking: classify the WHOLE fetched set (no heuristic pre-filter — that's P1.2).
- * Split into chunks of MAX_REPLIES_IN_PROMPT (40), but cap at MAX_CLASSIFY_CALLS chunks
- * to respect the shallow-mode cost ceiling. Excess comments are simply skipped this run
- * and surfaced as a warning.
+ * P1.2 chunking: callers pass the (already prefiltered) comment set. We split
+ * into chunks of MAX_REPLIES_IN_PROMPT (40), capped at MAX_CLASSIFY_CALLS — in
+ * shallow mode that's a single chunk because the prefilter already capped at 40.
+ *
+ * Kept exported so deep mode (P1.3) and tests can reuse the chunk-budget math.
  */
 export function chunkForClassification(comments: XComment[]): XComment[][] {
   if (comments.length === 0) return [];
@@ -143,14 +206,36 @@ async function classifyBatch(
 export async function classifyComments(thread: XThread): Promise<ClassifyOutcome> {
   const flat = flattenComments(thread.comments);
   if (flat.length === 0) {
-    return { classifiedCount: 0, callCount: 0, warnings: [] };
+    return {
+      classifiedCount: 0,
+      callCount: 0,
+      warnings: [],
+      prefilterApplied: false,
+      candidatePool: 0,
+      classifiedFromPool: 0,
+    };
   }
 
-  // Hydrate from per-comment cache first via the chat() composite-key reuse path.
-  // We rely on the batch cache key + the chat() module's prompt_hash machinery; per-comment
-  // persistence happens after each batch resolves so the next run can short-circuit.
+  // P1.2: in shallow mode we pre-filter by engagement before chunking. When the
+  // total fetched set already fits in a single batch we skip the sort entirely
+  // (no point reordering a list that fits as-is) and `prefilterApplied` stays false.
+  const prefilterApplied = flat.length > MAX_REPLIES_IN_PROMPT;
+  const candidatePool = flat.length;
+  const candidates = prefilterApplied ? prefilterByEngagement(flat) : flat;
 
-  const batches = chunkForClassification(flat);
+  if (prefilterApplied) {
+    logger.debug('classification prefilter applied', {
+      candidatePool,
+      batchSize: candidates.length,
+      formula: 'likes + 2*replies + (verified ? 50 : 0)',
+    });
+  } else {
+    logger.debug('classification prefilter skipped — fetched set fits in single batch', {
+      candidatePool,
+    });
+  }
+
+  const batches = chunkForClassification(candidates);
   const warnings: string[] = [];
   let classifiedCount = 0;
   let callCount = 0;
@@ -158,7 +243,7 @@ export async function classifyComments(thread: XThread): Promise<ClassifyOutcome
   const skipped = flat.length - batches.reduce((sum, b) => sum + b.length, 0);
   if (skipped > 0) {
     warnings.push(
-      `Partial: classified up to ${batches.reduce((s, b) => s + b.length, 0)} of ${flat.length} replies (${skipped} skipped — shallow-mode cap).`,
+      `Partial: classified top ${batches.reduce((s, b) => s + b.length, 0)} of ${flat.length} replies by engagement (${skipped} skipped — shallow-mode prefilter).`,
     );
   }
 
@@ -186,7 +271,14 @@ export async function classifyComments(thread: XThread): Promise<ClassifyOutcome
     }
   }
 
-  return { classifiedCount, callCount, warnings };
+  return {
+    classifiedCount,
+    callCount,
+    warnings,
+    prefilterApplied,
+    candidatePool,
+    classifiedFromPool: classifiedCount,
+  };
 }
 
 export function computeStanceDistribution(thread: XThread): StanceDistribution {

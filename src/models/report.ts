@@ -18,6 +18,10 @@ export type NotableReply = z.infer<typeof NotableReplySchema>;
 /**
  * P1.0: coverage metadata describing how much of the conversation we walked.
  * Added as an optional field on ResearchReport so Phase 0 outputs remain valid.
+ *
+ * P1.2: extended with prefilter telemetry so callers can see how the heuristic
+ * engagement pre-filter narrowed the classification batch. Absent when no
+ * prefilter ran (e.g. fetched ≤ MAX_REPLIES_IN_PROMPT).
  */
 export const ThreadCoverageSchema = z.object({
   targetDepth: z.number().int(),
@@ -28,6 +32,10 @@ export const ThreadCoverageSchema = z.object({
   paginationCursors: z.array(z.string()).default([]),
   status: z.enum(['ok', 'partial', 'failed']).default('ok'),
   failureReason: z.string().optional(),
+  // P1.2 prefilter telemetry — all optional so P1.0/P1.1 outputs remain valid.
+  prefilterApplied: z.boolean().optional(),
+  candidatePool: z.number().int().nonnegative().optional(),
+  classifiedFromPool: z.number().int().nonnegative().optional(),
 });
 export type ThreadCoverage = z.infer<typeof ThreadCoverageSchema>;
 
