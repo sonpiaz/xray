@@ -21,16 +21,17 @@ XRay aims to become the best-in-class tool for **deep research on X**, with a st
 
 ## Overall Phased Approach
 
-| Phase     | Name                    | Focus Area                          | Status      | Target  |
-|-----------|-------------------------|-------------------------------------|-------------|---------|
-| Pre-Phase | Spec & Architecture     | Foundation, principles, decisions   | Complete    | -       |
-| **0**     | Foundation              | Thread research + basic pipeline    | In progress | Q2 2026 |
-| **1**     | Deep Conversation       | Full comment trees + analysis       | **Specced** | Q3 2026 |
-| **2**     | Video Understanding     | Video analysis on X                 | Planned     | Q3 2026 |
-| **3**     | External Content        | Article & link understanding        | Planned     | Q4 2026 |
-| **4**     | Advanced Research       | Semantic search & narrative tools   | Planned     | Q4 2026 |
-| **5**     | Polish & OSS Readiness  | Hardening, docs, MCP, exports       | Planned     | Q1 2027 |
-| **6**     | Launch & Post-Launch    | Public release + iteration          | Planned     | Q1 2027 |
+| Phase     | Name                         | Focus Area                          | Status      | Target  |
+|-----------|------------------------------|-------------------------------------|-------------|---------|
+| Pre-Phase | Spec & Architecture          | Foundation, principles, decisions   | Complete    | -       |
+| **0**     | Foundation                   | Thread research + basic pipeline    | In progress | Q2 2026 |
+| **1**     | Deep Conversation            | Full comment trees + analysis       | **Specced** | Q3 2026 |
+| **1.5**   | Invisible Auth Escalation    | SSR default + silent cookie inject  | **Specced** | Q3 2026 |
+| **2**     | Video Understanding          | Video analysis on X                 | Planned     | Q3 2026 |
+| **3**     | External Content             | Article & link understanding        | Planned     | Q4 2026 |
+| **4**     | Advanced Research            | Semantic search & narrative tools   | Planned     | Q4 2026 |
+| **5**     | Polish & OSS Readiness       | Hardening, docs, MCP, exports       | Planned     | Q1 2027 |
+| **6**     | Launch & Post-Launch         | Public release + iteration          | Planned     | Q1 2027 |
 
 Phases 1–3 may run in parallel once Phase 0 is stable.
 
@@ -66,6 +67,16 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 - Backward-compatible: existing CLI/MCP calls produce same output shape
 - Ships as v0.2.0 in one PR with 4 internal sub-phases (P1.0 pagination → P1.1 classify → P1.2 scoring → P1.3 deep mode)
 
+## Phase 1.5 — Invisible Auth Escalation ([Spec](./PHASE_1_5_PLAN.md))
+- **Principle:** Auth is the last resort. Default invocation requires zero setup.
+- 4-tier escalation: SSR scrape (Tier 1) -> anonymous Playwright (Tier 2) -> silent Chromium cookie inject (Tier 3) -> interactive auth (Tier 4)
+- `xray thread <url>` (no flags) defaults to SSR-only (cheerio HTML parse, no browser launch, sub-2s)
+- Silent cookie reader for Chrome, Brave, Edge on macOS (Keychain decrypt, PBKDF2 + AES-128-CBC)
+- `xray auth --status` diagnostics subcommand
+- `coverage.tier` field on every report
+- Ships together with Phase 1 as v0.2.0 (hard break from Phase 0 default behavior, documented in CHANGELOG)
+- 4 internal sub-phases (P1.5.0 SSR → P1.5.1 cookie reader → P1.5.2 escalation orchestrator → P1.5.3 auth --status)
+
 ## Phase 2 — Video Understanding
 - Auto-detect & download X-hosted video
 - Intelligent frame extraction
@@ -100,14 +111,14 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 
 ## Milestones
 
-| Milestone | Target          | Description                          |
-|-----------|-----------------|--------------------------------------|
-| M0        | Now             | Spec + Roadmap                       |
-| M1        | End of Phase 0  | First usable version                 |
-| M2        | End of Phase 2  | Multimodal (thread + video)          |
-| M3        | End of Phase 4  | Advanced research                    |
-| M4        | End of Phase 5  | Production-ready OSS                 |
-| M5        | Phase 6         | Public launch                        |
+| Milestone | Target              | Description                          |
+|-----------|---------------------|--------------------------------------|
+| M0        | Now                 | Spec + Roadmap                       |
+| M1        | End of Phase 1 + 1.5| First usable version (v0.2.0 = P0 + P1 + P1.5 combined) |
+| M2        | End of Phase 2      | Multimodal (thread + video)          |
+| M3        | End of Phase 4      | Advanced research                    |
+| M4        | End of Phase 5      | Production-ready OSS                 |
+| M5        | Phase 6             | Public launch                        |
 
 ---
 
