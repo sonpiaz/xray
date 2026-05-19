@@ -29,7 +29,7 @@ XRay aims to become the best-in-class tool for **deep research on X**, with a st
 | **1.5**   | Invisible Auth Escalation    | SSR default + silent cookie inject  | **Shipped**     | v0.2.0    | Q2 2026 |
 | **2**     | Video Understanding          | Video analysis on X                 | **Shipped**     | v0.3.0-v0.3.1 | Q2 2026 |
 | **3**     | External Content             | Article & link understanding        | **Shipped**     | v0.4.0    | Q3 2026 |
-| **4**     | Advanced Research            | Semantic search & narrative tools   | Planned         | -         | Q4 2026 |
+| **4**     | Advanced Research            | Semantic search & profile analysis  | **Specced**     | v0.5.0    | Q3 2026 |
 | **5**     | Polish & OSS Readiness       | Hardening, docs, MCP, exports       | Planned         | -         | Q1 2027 |
 | **6**     | Launch & Post-Launch         | Public release + iteration          | Planned         | v1.0      | Q1 2027 |
 
@@ -100,13 +100,25 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 - 4 internal sub-phases: P3.0 X Article + simple summary + standalone -> P3.1 external link 3-tier fetch -> P3.2 full cross-reference attribution -> P3.3 MCP + CLI wiring + polish
 - Ships as v0.4.0 (fully additive, no breaking changes from v0.3.1)
 
-## Phase 4 — Advanced Research
-- Semantic search over fetched content
-- Profile analysis
-- Narrative / controversy tracking
-- Batch research & comparison
+## Phase 4 — Advanced Research ([Spec](./PHASE_4_PLAN.md))
+- **Scope: Semantic search + profile analysis ONLY.** Narrative tracking and batch research deferred to Phase 5.
+- **Principle:** Advanced research is OPT-IN cross-thread analysis. Default `xray thread` unchanged. Embeddings are local (private, no API).
+- Local MiniLM-L6-v2 embeddings via `@xenova/transformers` (~100MB one-time model download, $0 per query)
+- sqlite-vec extension for fast vector similarity search (pure-JS cosine fallback on unsupported platforms)
+- `xray search "<query>"` standalone command + `xray_search` MCP tool — semantic search across all cached content
+- `xray profile @<handle>` standalone command + `xray_profile` MCP tool — aggregate cached data into structured profile (topics, stance, expertise, notable quotes) via Kyma synthesis ($0.05-0.20)
+- Profile default: cache-only aggregation; `--fresh N` opt-in for fresh thread fetching
+- `xray cache embed` command for explicit embedding; lazy embedding on first search/profile
+- 3 internal sub-phases: P4.0 embedding infra (~6-8h) -> P4.1 semantic search (~5-7h) -> P4.2 profile analysis + polish (~8-10h)
+- Ships as v0.5.0 (fully additive, no breaking changes from v0.4.0)
 
-## Phase 5 — Polish & OSS Readiness
+## Phase 5 — Narrative Tracking + Batch + Polish & OSS Readiness
+- **Narrative / controversy tracking** — temporal analysis of stance drift, topic evolution across threads (previously in Phase 4 vision, deferred here)
+- **Batch research & comparison** — `xray batch` command for parallel multi-thread/multi-profile processing (previously in Phase 4 vision, deferred here)
+- Advanced caching + rate-limit handling
+- Custom embedding models (BYOM) and API-based embedding providers
+- Profile comparison (A vs B side-by-side analysis)
+- Very large embedding store handling (>100k items)
 - Advanced caching + rate-limit handling
 - Rich export formats (Markdown, JSON, Obsidian)
 - Comprehensive documentation
@@ -129,8 +141,8 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 | M1        | End of Phase 0+1+1.5| First usable version (v0.2.0 = P0 + P1 + P1.5 combined) | Done (v0.2.2) |
 | M2        | End of Phase 2      | Multimodal (thread + video) — v0.3.0 | Done (v0.3.1) |
 | M2.5      | End of Phase 3      | Full content understanding (thread + video + articles) — v0.4.0 | Done (v0.4.0) |
-| M3        | End of Phase 4      | Advanced research                    | Planned |
-| M4        | End of Phase 5      | Production-ready OSS                 | Planned |
+| M3        | End of Phase 4      | Semantic search + profile (scope: search + profile only; narrative + batch deferred to P5) — v0.5.0 | Specced |
+| M4        | End of Phase 5      | Narrative tracking + batch + OSS polish | Planned |
 | M5        | Phase 6             | Public launch                        | Planned |
 
 ---
