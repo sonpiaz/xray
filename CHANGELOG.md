@@ -4,6 +4,16 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-05-19
+
+### Added
+- **Author-priority pagination.** `ShowMore` sub-cursors whose parent comment is an OP-reply-to-commenter (`isAuthorReply` from v0.2.1) now jump to the front of the Phase B queue, so the highest-signal nested conversations expand before random sub-threads.
+- **Adaptive request budget.** Threads with self-thread continuations (`authorPosts.length >= 2`) or very busy comment sections (`>200` comments) get the pagination budget bumped 2× (capped at 3× ceiling). Surfaced via debug log.
+- **Early-stop at 5 author replies.** Phase B exits once `≥5` `isAuthorReply` comments are fetched — enough context, stop burning budget.
+
+### Fixed
+- Karpathy-class threads previously reported `depth 1/3` because Phase A (top-level pagination) consumed the request budget before Phase B (nested) could run. The adaptive bump + author-first queue together let Phase B reach the high-signal sub-threads within budget.
+
 ## [0.2.1] — 2026-05-19
 
 ### Added
