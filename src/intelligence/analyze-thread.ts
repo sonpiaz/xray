@@ -5,17 +5,27 @@ import { type FetchMode, type FetchOptions, fetchThread } from '../fetcher/threa
 import { parseXUrl } from '../fetcher/url.ts';
 import { analyzeThread } from '../kyma/analyze.ts';
 import type { ShallowAnalysisDigest } from '../kyma/prompts.ts';
+import type { ArticleSummary } from '../models/article.ts';
 import type { XMedia } from '../models/media.ts';
 import type { XPost } from '../models/post.ts';
 import type { ResearchReport, StanceDistribution, ThreadCoverage } from '../models/report.ts';
 import type { XThread } from '../models/thread.ts';
 import type { VideoReport } from '../models/video-report.ts';
+import { analyzeArticle } from './article.ts';
 import { classifyComments, computeStanceDistribution } from './classify.ts';
 import { deepAnalyze } from './deep.ts';
 import { analyzeVideo } from './video.ts';
 
 /** Defensive cap so a 10-video thread doesn't burn $5+ silently. */
 const MAX_VIDEOS_PER_THREAD = 3;
+
+/**
+ * P3.2 — Defensive cap on linked articles per `--articles` thread run.
+ * Higher than video (3) because articles are cheaper per-call, but still
+ * bounded so a link-heavy thread doesn't burn $1+ silently. Spec §15
+ * (Risks: Cost without caps at full scope).
+ */
+const MAX_ARTICLES_PER_THREAD = 5;
 
 export type ResearchOptions = {
   mode?: FetchMode;
@@ -32,6 +42,24 @@ export type ResearchOptions = {
   // MAX_VIDEOS_PER_THREAD. Comments are not scanned (too expensive).
   // Failures degrade into warnings; the rest of the report still ships.
   video?: boolean;
+  // P3.2 — when true, scan rootPost + authorPosts for external links +
+  // X Article cards, then run the article pipeline (fetch → summarize →
+  // cross-reference) on each. Capped at MAX_ARTICLES_PER_THREAD.
+  // Comments are not scanned (cost). Failures per article degrade into
+  // warnings; the rest of the report still ships.
+  articles?: boolean;
+};
+
+/**
+ * P3.2 — A single article candidate produced by `collectArticleCandidates`.
+ * Stores the URL plus an optional `cardData` payload when the candidate
+ * came from an X Article tweet card (lets the orchestrator skip a
+ * redundant network round-trip).
+ */
+export type ArticleCandidate = {
+  url: string;
+  source: 'x-article' | 'external-html';
+  cardData?: unknown;
 };
 
 export async function research(url: string, opts: ResearchOptions = {}): Promise<ResearchReport> {
@@ -177,6 +205,50 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     });
   }
 
+  // P3.2 — Article pipeline. Runs after analyze so an article failure
+  // can't block the text report. Scans rootPost.links + authorPosts[]
+  // .links + rootPost.raw (for X Article cards). Comments not scanned.
+  let articleSummaries: ArticleSummary[] | undefined;
+  if (opts.articles) {
+    const candidates = collectArticleCandidates(thread);
+    if (candidates.length === 0) {
+      logger.debug('articles flag set but no article candidates found on root/author posts');
+    } else {
+      if (candidates.length > MAX_ARTICLES_PER_THREAD) {
+        logger.debug('capping article analysis at MAX_ARTICLES_PER_THREAD', {
+          found: candidates.length,
+          cap: MAX_ARTICLES_PER_THREAD,
+        });
+        partialWarnings.push(
+          `Found ${candidates.length} articles on this thread; analyzing first ${MAX_ARTICLES_PER_THREAD}.`,
+        );
+      }
+      const slice = candidates.slice(0, MAX_ARTICLES_PER_THREAD);
+      const tweetContextText = buildTweetContext(thread);
+      const results: ArticleSummary[] = [];
+      for (const cand of slice) {
+        try {
+          const analyzeOpts: Parameters<typeof analyzeArticle>[0] = {
+            url: cand.url,
+            tweetContext: {
+              text: tweetContextText,
+              postId: thread.rootPost.id,
+            },
+          };
+          if (opts.noCache) analyzeOpts.noCache = true;
+          if (cand.cardData !== undefined) analyzeOpts.cardData = cand.cardData;
+          const summary = await analyzeArticle(analyzeOpts);
+          results.push(summary);
+        } catch (err) {
+          const msg = String(err);
+          partialWarnings.push(`Article pipeline failed for ${cand.url}: ${msg}`);
+          logger.warn('article pipeline failed', { url: cand.url, err: msg });
+        }
+      }
+      if (results.length > 0) articleSummaries = results;
+    }
+  }
+
   // P2.3 — Video pipeline. Runs after analyze so a video failure can't
   // block the text report. Scans rootPost.media + authorPosts[].media for
   // type === 'video' (comments not scanned — expensive).
@@ -233,7 +305,126 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     ...(subtreeSummaries ? { subtreeSummaries } : {}),
     ...(deepSynthesis ? { deepSynthesis } : {}),
     ...(videoAnalysis ? { videoAnalysis } : {}),
+    ...(articleSummaries ? { articleSummaries } : {}),
   };
+}
+
+/**
+ * P3.2 — Collect article candidates from rootPost + authorPosts.
+ *
+ * Two channels:
+ *   1. `post.links[]` (already populated by parser) — any HTTP(S) URL
+ *      that classifies as an article (external-html or x-article).
+ *   2. The root post's raw card payload — if X served the tweet with
+ *      an Article card attached, harvest it without re-fetching.
+ *
+ * Comments are intentionally NOT scanned (a busy thread can expose
+ * 50+ external links and burn $1+ in a single call). De-duplicates by
+ * the post's `expandedUrl` (preferred) or `url` field. Cap downstream
+ * via MAX_ARTICLES_PER_THREAD.
+ *
+ * Exported for unit tests.
+ */
+export function collectArticleCandidates(thread: XThread): ArticleCandidate[] {
+  // Local import — pulled here so the module-load graph doesn't pick up
+  // detect.ts in modules that only need analyze-thread for its types.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { detectArticleSource } = require('../article/detect.ts') as {
+    detectArticleSource: (url: string) => 'x-article' | 'external-html' | null;
+  };
+
+  const posts: XPost[] = [thread.rootPost, ...thread.authorPosts];
+  const seen = new Set<string>();
+  const out: ArticleCandidate[] = [];
+
+  // Channel 1 — external links on root + author posts.
+  for (const p of posts) {
+    for (const link of p.links) {
+      const target = link.expandedUrl ?? link.url;
+      if (!target) continue;
+      const src = detectArticleSource(target);
+      if (!src) continue;
+      if (seen.has(target)) continue;
+      seen.add(target);
+      out.push({ url: target, source: src });
+    }
+  }
+
+  // Channel 2 — X Article card on root post raw payload.
+  const rootRaw = thread.rootPost.raw;
+  if (rootRaw && typeof rootRaw === 'object' && !Array.isArray(rootRaw) && 'card' in rootRaw) {
+    const card = (rootRaw as { card?: unknown }).card;
+    if (card && typeof card === 'object' && !Array.isArray(card)) {
+      // Pull the card URL (article identity) so we can dedup against
+      // Channel 1 hits and use it as the article URL.
+      const cardUrl = extractCardUrl(card);
+      if (cardUrl) {
+        if (!seen.has(cardUrl)) {
+          seen.add(cardUrl);
+          out.push({ url: cardUrl, source: 'x-article', cardData: card });
+        } else {
+          // We already saw this URL via the links channel — upgrade the
+          // existing entry with the card payload so the orchestrator
+          // skips the network round-trip.
+          const existing = out.find((c) => c.url === cardUrl);
+          if (existing && existing.cardData === undefined) existing.cardData = card;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Extract the canonical card URL from an X Article card payload. Probes
+ * the documented binding key shapes (`card_url`, `url`, `article_url`)
+ * in that order and falls through to the card's own `url` field. Returns
+ * undefined when nothing usable is present.
+ */
+function extractCardUrl(card: unknown): string | undefined {
+  if (!card || typeof card !== 'object' || Array.isArray(card)) return undefined;
+  const co = card as Record<string, unknown>;
+
+  // Direct `card.url`.
+  if (typeof co.url === 'string' && co.url.startsWith('http')) return co.url;
+
+  // Walk legacy.binding_values looking for url-shaped entries.
+  const legacy = co.legacy;
+  if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) return undefined;
+  const bindings = (legacy as { binding_values?: unknown }).binding_values;
+  if (!Array.isArray(bindings)) return undefined;
+
+  const URL_KEYS = ['card_url', 'url', 'article_url'];
+  for (const key of URL_KEYS) {
+    for (const b of bindings) {
+      if (!b || typeof b !== 'object') continue;
+      const bo = b as Record<string, unknown>;
+      if (bo.key !== key) continue;
+      const value = bo.value;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const sv = (value as { string_value?: unknown }).string_value;
+        if (typeof sv === 'string' && sv.startsWith('http')) return sv;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Build the tweet thesis text fed into article cross-reference. Joins
+ * the root post text with any author follow-up texts (separator: blank
+ * line). Caller is responsible for truncation downstream (the
+ * cross-reference module caps to TWEET_THESIS_MAX_CHARS).
+ *
+ * Exported for unit tests.
+ */
+export function buildTweetContext(thread: XThread): string {
+  const parts: string[] = [thread.rootPost.text];
+  for (const p of thread.authorPosts) {
+    if (p.text) parts.push(p.text);
+  }
+  return parts.join('\n\n');
 }
 
 /**

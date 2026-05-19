@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ArticleSummarySchema } from './article.ts';
 import { XThreadSchema } from './thread.ts';
 import { VideoReportSchema } from './video-report.ts';
 
@@ -140,5 +141,10 @@ export const ResearchReportSchema = z.object({
   // video was detected on the root post or author follow-ups. Absent on
   // every prior path so v0.0.1 / v0.2.x outputs remain valid.
   videoAnalysis: z.array(VideoReportSchema).optional(),
+  // P3.2 — present only when `--articles` / `articles: true` ran AND at
+  // least one linked article (X Article card or external HTTP URL) was
+  // detected on the root post or author follow-ups. Absent otherwise so
+  // existing v0.3.x outputs remain valid.
+  articleSummaries: z.array(ArticleSummarySchema).optional(),
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;

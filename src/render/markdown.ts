@@ -1,6 +1,7 @@
 import type { XComment } from '../models/comment.ts';
 import type { XPost } from '../models/post.ts';
 import type { ResearchReport } from '../models/report.ts';
+import { renderArticleMarkdown } from './article-markdown.ts';
 import { renderVideoMarkdown } from './video-markdown.ts';
 
 function fmtNum(n: number | undefined): string {
@@ -101,6 +102,19 @@ export function renderReportMarkdown(report: ResearchReport): string {
       );
     }
     out.push('');
+  }
+
+  // P3.2 — Articles section. Rendered only when `--articles` / `articles: true`
+  // ran AND at least one linked article was detected. Each article renders in
+  // `embedded` mode so headings nest under the section heading. Mirrors the
+  // P2.3 video block pattern.
+  if (report.articleSummaries && report.articleSummaries.length > 0) {
+    out.push(`## Articles (${report.articleSummaries.length})`);
+    out.push('');
+    for (const summary of report.articleSummaries) {
+      out.push(renderArticleMarkdown(summary, { mode: 'embedded' }));
+      out.push('');
+    }
   }
 
   // P2.3 — Video Analysis section. Rendered only when `--video` / `video: true`
