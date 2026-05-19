@@ -1,4 +1,4 @@
-import { cacheInfo, clearCache, closeDb } from '../../cache/index.ts';
+import { cacheInfo, clearCache, clearProfileCache, closeDb } from '../../cache/index.ts';
 import { embedAllCached } from '../../embeddings/index.ts';
 
 export function cacheInfoCommand(): void {
@@ -20,7 +20,13 @@ export function cacheInfoCommand(): void {
   );
 }
 
-export function cacheClearCommand(): void {
+export function cacheClearCommand(opts: { profilesOnly?: boolean } = {}): void {
+  if (opts.profilesOnly) {
+    clearProfileCache();
+    closeDb();
+    process.stderr.write('profile cache cleared\n');
+    return;
+  }
   clearCache();
   process.stderr.write('cache cleared\n');
 }

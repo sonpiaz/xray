@@ -6,20 +6,22 @@ import { logger } from '../core/logger.ts';
 import { closeBrowser } from '../fetcher/browser.ts';
 import { research } from '../intelligence/analyze-thread.ts';
 import { type ArticleAnalyzeOptions, analyzeArticle } from '../intelligence/article.ts';
+import { type ProfileAnalyzeOptions, analyzeProfile } from '../intelligence/profile.ts';
 import { type VideoAnalyzeOptions, analyzeVideo } from '../intelligence/video.ts';
 import { renderArticleMarkdown } from '../render/article-markdown.ts';
 import { renderReportMarkdown } from '../render/markdown.ts';
+import { renderProfileMarkdown } from '../render/profile-markdown.ts';
 import { renderSearchMarkdown } from '../render/search-markdown.ts';
 import { renderVideoMarkdown } from '../render/video-markdown.ts';
 import { type SearchOptions, search } from '../search/search.ts';
 // P3.3 — schemas live in `./schemas.ts` so they're importable in unit
 // tests without dragging in `bun:sqlite` from the cache layer. The
 // server re-exports them so existing importers keep working.
-import { ArticleInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
+import { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
 
-export { ArticleInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
+export { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({ name: 'xray', version: VERSION });
@@ -225,6 +227,54 @@ export async function startMcpServer(): Promise<void> {
       } catch (err) {
         const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
         logger.error(`xray_search failed: ${msg}`);
+        return {
+          isError: true,
+          content: [{ type: 'text', text: msg }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    'xray_profile',
+    {
+      title: 'Build a profile from cached XRay content for an X handle',
+      description:
+        'Aggregates every cached post + comment authored by the given X handle and synthesizes a ProfileReport via 3 Kyma calls (topics + expertise, stance, notable quotes + summary). Cache-only — populate the cache with `xray thread` on their posts first. 24h cache via `profile_cache`. ~$0.05-0.20 per profile. The `fresh` arg is reserved for P5+ and currently logs a warning + falls back to cache-only.',
+      inputSchema: ProfileInput,
+    },
+    async (args) => {
+      try {
+        const opts: ProfileAnalyzeOptions = { handle: args.handle };
+        if (args.noCache) opts.noCache = true;
+        if (args.fresh !== undefined) opts.fresh = args.fresh;
+        if (args.model) opts.synthesisModel = args.model;
+
+        const report = await analyzeProfile(opts);
+        const format = args.format ?? 'markdown';
+
+        if (format === 'json') {
+          return {
+            content: [{ type: 'text', text: JSON.stringify(report, null, 2) }],
+            structuredContent: report as unknown as Record<string, unknown>,
+          };
+        }
+        if (format === 'both') {
+          return {
+            content: [
+              { type: 'text', text: renderProfileMarkdown(report) },
+              { type: 'text', text: JSON.stringify(report, null, 2) },
+            ],
+            structuredContent: report as unknown as Record<string, unknown>,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: renderProfileMarkdown(report) }],
+          structuredContent: report as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
+        logger.error(`xray_profile failed: ${msg}`);
         return {
           isError: true,
           content: [{ type: 'text', text: msg }],

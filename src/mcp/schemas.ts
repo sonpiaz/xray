@@ -102,6 +102,31 @@ export const SearchInput = {
     .describe('Output format. Default: markdown.'),
 };
 
+export const ProfileInput = {
+  handle: z
+    .string()
+    .min(1)
+    .describe('X handle, with or without leading @ (e.g., karpathy or @karpathy)'),
+  noCache: z
+    .boolean()
+    .optional()
+    .describe('Skip profile_cache; force re-synthesize (3 fresh Kyma calls).'),
+  fresh: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe(
+      'Fetch N recent tweets first. P5+ — currently logs a warning and silently falls back to cache-only.',
+    ),
+  model: z.string().optional().describe('Override Kyma synthesis model.'),
+  format: z
+    .enum(['markdown', 'json', 'both'])
+    .optional()
+    .describe('Output format. Default: markdown.'),
+};
+
 export const ArticleInput = {
   url: z
     .string()
