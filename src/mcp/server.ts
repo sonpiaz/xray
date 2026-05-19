@@ -10,7 +10,7 @@ import { type VideoAnalyzeOptions, analyzeVideo } from '../intelligence/video.ts
 import { renderReportMarkdown } from '../render/markdown.ts';
 import { renderVideoMarkdown } from '../render/video-markdown.ts';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 
 const ThreadInput = {
   url: z.string().url().describe('Tweet URL (x.com/<user>/status/<id>)'),
@@ -64,7 +64,10 @@ const VideoInput = {
     .describe(
       'Run XRay-side Kyma synthesis (topic/keyMoments/summary). DEFAULT FALSE for MCP — caller agent typically synthesises better with its own context. Set true if you want a pre-built summary and accept the ~$0.02/video cost.',
     ),
-  model: z.string().optional().describe('Override Kyma synthesis model (only used if synthesize=true).'),
+  model: z
+    .string()
+    .optional()
+    .describe('Override Kyma synthesis model (only used if synthesize=true).'),
   format: z
     .enum(['markdown', 'json', 'both'])
     .optional()

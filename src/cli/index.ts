@@ -7,7 +7,7 @@ import { mcpCommand } from './commands/mcp.ts';
 import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');

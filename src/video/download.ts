@@ -190,7 +190,16 @@ export type VideoDownloadResult = {
 };
 
 export async function downloadVideo(opts: DownloadVideoOptions): Promise<VideoDownloadResult> {
-  const platform = detectPlatform(opts.url);
+  let platform = detectPlatform(opts.url);
+
+  // Short-circuit: when the caller hands us a `mediaHint` of type 'video' the
+  // URL is authoritatively X-native regardless of where the URL points to
+  // (the parser passes the raw `video.twimg.com` CDN url, not the tweet URL).
+  // Avoid platform-detect surprises by trusting the hint. Fixes the v0.3.0
+  // "Unsupported platform" failure for every X tweet with native video.
+  if (opts.mediaHint?.type === 'video' && opts.mediaHint.url) {
+    platform = 'x-native';
+  }
 
   // Path 1: X-native with a parsed media hint → direct CDN fetch (skip yt-dlp).
   if (platform === 'x-native' && opts.mediaHint && opts.mediaHint.type === 'video') {

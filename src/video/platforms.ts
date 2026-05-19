@@ -36,6 +36,12 @@ const X_HOSTS = new Set([
   'www.twitter.com',
   'mobile.twitter.com',
   'mobile.x.com',
+  // X video CDN — parser passes the raw mp4 URL from `legacy.entities.media`
+  // straight into the video pipeline, not the tweet page URL. Without these
+  // hosts every X-native direct video failed v0.3.0 with "Unsupported
+  // platform" (surfaced by Son's first live --video test on 2026-05-19).
+  'video.twimg.com',
+  'pbs.twimg.com', // images, included for completeness
 ]);
 
 /**

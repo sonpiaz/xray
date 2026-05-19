@@ -4,6 +4,12 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-05-19
+
+### Fixed
+- **X-native video pipeline was completely broken in v0.3.0.** Every tweet with a direct video failed with "Unsupported platform" because the parser passes the raw `video.twimg.com` CDN URL into the video pipeline (not the tweet page URL), and platform detection only recognised `x.com`/`twitter.com` hosts. Surfaced by the first live `--video` test on 2026-05-19. Two fixes: (1) `downloadVideo` now trusts a caller-supplied `mediaHint: { type: 'video' }` as authoritatively X-native regardless of URL host; (2) `detectPlatform` recognises `video.twimg.com` and `pbs.twimg.com` defensively.
+- Live test after fix: 27m52s Claude Code talk transcribed (28K chars), 8 key moments, $0.108 cost, full summary.
+
 ## [0.3.0] — 2026-05-19
 
 ### Added

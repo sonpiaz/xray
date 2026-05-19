@@ -922,13 +922,17 @@ describe('analyzeVideo URL-level cache integration', () => {
 
 describe('defaultVideoCacheMaxBytes (XRAY_VIDEO_CACHE_MAX_GB env var)', () => {
   const ORIG = process.env.XRAY_VIDEO_CACHE_MAX_GB;
+  const unset = () => {
+    // biome-ignore lint/performance/noDelete: env var unset != empty string for test isolation
+    delete process.env.XRAY_VIDEO_CACHE_MAX_GB;
+  };
   afterEach(() => {
-    if (ORIG === undefined) delete process.env.XRAY_VIDEO_CACHE_MAX_GB;
+    if (ORIG === undefined) unset();
     else process.env.XRAY_VIDEO_CACHE_MAX_GB = ORIG;
   });
 
   it('returns 5 GB when env var unset', () => {
-    delete process.env.XRAY_VIDEO_CACHE_MAX_GB;
+    unset();
     expect(defaultVideoCacheMaxBytes()).toBe(5 * 1_000_000_000);
   });
 
