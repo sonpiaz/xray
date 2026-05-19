@@ -77,6 +77,31 @@ export const VideoInput = {
     .describe('Output format. Default: markdown.'),
 };
 
+export const SearchInput = {
+  query: z
+    .string()
+    .min(1)
+    .describe(
+      'Search query (will be embedded with MiniLM-L6-v2 locally and matched against cached XRay content).',
+    ),
+  limit: z.number().int().min(1).max(50).optional().describe('Max results. Default 10.'),
+  threshold: z
+    .number()
+    .min(-1)
+    .max(1)
+    .optional()
+    .describe('Minimum cosine similarity (-1..1). Default: no filter.'),
+  type: z
+    .enum(['comment', 'post', 'thread', 'article-passage'])
+    .optional()
+    .describe('Filter by entity type.'),
+  rerank: z.boolean().optional().describe('LLM rerank top candidates (~$0.005 extra cost).'),
+  format: z
+    .enum(['markdown', 'json', 'both'])
+    .optional()
+    .describe('Output format. Default: markdown.'),
+};
+
 export const ArticleInput = {
   url: z
     .string()

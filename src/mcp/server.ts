@@ -9,13 +9,15 @@ import { type ArticleAnalyzeOptions, analyzeArticle } from '../intelligence/arti
 import { type VideoAnalyzeOptions, analyzeVideo } from '../intelligence/video.ts';
 import { renderArticleMarkdown } from '../render/article-markdown.ts';
 import { renderReportMarkdown } from '../render/markdown.ts';
+import { renderSearchMarkdown } from '../render/search-markdown.ts';
 import { renderVideoMarkdown } from '../render/video-markdown.ts';
+import { type SearchOptions, search } from '../search/search.ts';
 // P3.3 — schemas live in `./schemas.ts` so they're importable in unit
 // tests without dragging in `bun:sqlite` from the cache layer. The
 // server re-exports them so existing importers keep working.
-import { ArticleInput, ThreadInput, VideoInput } from './schemas.ts';
+import { ArticleInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
 
-export { ArticleInput, ThreadInput, VideoInput } from './schemas.ts';
+export { ArticleInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
 
 const VERSION = '0.4.0';
 
@@ -174,6 +176,55 @@ export async function startMcpServer(): Promise<void> {
       } catch (err) {
         const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
         logger.error(`xray_article failed: ${msg}`);
+        return {
+          isError: true,
+          content: [{ type: 'text', text: msg }],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    'xray_search',
+    {
+      title: 'Semantic search across cached XRay content',
+      description:
+        'Embeds the query locally with MiniLM-L6-v2 and finds the most similar cached items (comments, posts, article passages) by cosine similarity. Searches your local XRay cache only — run `xray cache embed` after `xray thread` to populate the embedding index. Optional `rerank=true` adds a Kyma chat pass to reorder the top candidates (~$0.005). Without rerank: $0.',
+      inputSchema: SearchInput,
+    },
+    async (args) => {
+      try {
+        const opts: SearchOptions = { query: args.query };
+        if (args.limit !== undefined) opts.limit = args.limit;
+        if (args.threshold !== undefined) opts.threshold = args.threshold;
+        if (args.type !== undefined) opts.typeFilter = args.type;
+        if (args.rerank) opts.rerank = true;
+
+        const response = await search(opts);
+        const format = args.format ?? 'markdown';
+
+        if (format === 'json') {
+          return {
+            content: [{ type: 'text', text: JSON.stringify(response, null, 2) }],
+            structuredContent: response as unknown as Record<string, unknown>,
+          };
+        }
+        if (format === 'both') {
+          return {
+            content: [
+              { type: 'text', text: renderSearchMarkdown(response) },
+              { type: 'text', text: JSON.stringify(response, null, 2) },
+            ],
+            structuredContent: response as unknown as Record<string, unknown>,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: renderSearchMarkdown(response) }],
+          structuredContent: response as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        const msg = err instanceof XRayError ? `${err.code}: ${err.message}` : String(err);
+        logger.error(`xray_search failed: ${msg}`);
         return {
           isError: true,
           content: [{ type: 'text', text: msg }],
