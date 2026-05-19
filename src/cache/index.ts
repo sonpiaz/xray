@@ -2,6 +2,7 @@ import { rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import { logger } from '../core/logger.ts';
+import { embeddingCount, embeddingStorageBytes } from '../embeddings/store.ts';
 import {
   type VideoCacheInfo,
   clearVideoCache,
@@ -23,6 +24,11 @@ export type CacheInfo = {
   kymaCount: number;
   /** P2.2 — video cache stats (separate disk + SQLite footprint). */
   video: Pick<VideoCacheInfo, 'transcriptCount' | 'visionCount' | 'fileCount' | 'totalBytes'>;
+  /** P4.0 — embedded entity count + approximate footprint. */
+  embeddings: {
+    count: number;
+    storageBytes: number;
+  };
 };
 
 export function cacheInfo(): CacheInfo {
@@ -51,6 +57,10 @@ export function cacheInfo(): CacheInfo {
       visionCount: video.visionCount,
       fileCount: video.fileCount,
       totalBytes: video.totalBytes,
+    },
+    embeddings: {
+      count: embeddingCount(),
+      storageBytes: embeddingStorageBytes(),
     },
   };
 }

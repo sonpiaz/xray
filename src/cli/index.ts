@@ -3,7 +3,7 @@ import { XRayError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
 import { articleCommand } from './commands/article.ts';
 import { authCommand } from './commands/auth.ts';
-import { cacheClearCommand, cacheInfoCommand } from './commands/cache.ts';
+import { cacheClearCommand, cacheEmbedCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
@@ -77,12 +77,18 @@ export async function runCli(argv: string[]): Promise<number> {
     });
 
   cli
-    .command('cache [action]', 'Cache controls (action: info | clear)')
-    .action((action: string | undefined) => {
+    .command('cache [action]', 'Cache controls (action: info | clear | embed)')
+    .option(
+      '--no-resume',
+      'For `embed`: force a full re-embed even when content_hash is unchanged.',
+    )
+    .action(async (action: string | undefined, opts: { resume?: boolean }) => {
       const a = (action ?? 'info').toLowerCase();
       if (a === 'clear') return cacheClearCommand();
       if (a === 'info') return cacheInfoCommand();
-      throw new Error(`Unknown cache action: ${a}. Use info or clear.`);
+      // cac parses --no-resume into { resume: false }; pass through.
+      if (a === 'embed') return cacheEmbedCommand({ resume: opts.resume });
+      throw new Error(`Unknown cache action: ${a}. Use info, clear, or embed.`);
     });
 
   cli.command('mcp', 'Start the XRay MCP server (stdio transport)').action(async () => {
