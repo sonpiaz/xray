@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Building Production-Grade AI Agents in 2026 - Medium</title>
+  <link rel="canonical" href="https://medium.com/@author/building-production-grade-ai-agents-in-2026-abc123">
+  <meta property="og:title" content="Building Production-Grade AI Agents in 2026">
+  <meta property="og:description" content="Lessons from shipping AI agents at scale: what works, what doesn't, and what we're still figuring out.">
+  <meta property="og:url" content="https://medium.com/@author/building-production-grade-ai-agents-in-2026-abc123">
+  <meta property="article:published_time" content="2026-04-22T08:00:00Z">
+  <meta name="author" content="Alex Chen">
+</head>
+<body>
+  <header>
+    <nav>Sign in | Get unlimited access</nav>
+  </header>
+
+  <main>
+    <article>
+      <h1>Building Production-Grade AI Agents in 2026</h1>
+      <div class="byline">By Alex Chen, April 22, 2026</div>
+
+      <section class="article-content">
+        <p>When we started building AI agents two years ago, the industry consensus was that we needed huge models, expensive GPUs, and complex orchestration frameworks. Most of that turned out to be wrong. This post collects the lessons we've learned from shipping AI agents that handle real production traffic, from companies you've heard of and many you haven't.</p>
+
+        <p>Lesson one: smaller models are usually fine. We routinely route 80% of requests to a fast 7-billion-parameter model and only escalate the hard cases to a larger one. The cost savings are dramatic, and latency improves by 5-10x. The trick is knowing when to escalate. We use a lightweight classifier trained on past escalation patterns. It costs almost nothing and saves us five figures a month.</p>
+
+        <p>Lesson two: tool use is where the leverage is. Raw model capability matters less than the breadth and quality of tools the model can call. A 7B model with great tools beats a 70B model with no tools on almost every real task. Invest in your tool ecosystem: well-documented APIs, good error messages, fast response times, idempotent operations.</p>
+
+        <p>Lesson three: observability is non-negotiable. You can't operate what you can't see. Every agent decision, tool call, retry, and fallback should be logged with structured data. Trace IDs that span the entire request lifecycle. Dashboards for latency, cost, success rate, escalation rate. We use OpenTelemetry plus a custom agent-specific extension that captures model decisions and reasoning traces.</p>
+
+        <p>Lesson four: prompt management is engineering, not magic. Treat prompts like code: version-controlled, tested, reviewed. We have a CI pipeline that runs every prompt change against a regression suite of 500+ historical interactions. A prompt change that improves average quality but degrades a specific use case gets caught before it ships.</p>
+
+        <p>Lesson five: human-in-the-loop is a feature, not a fallback. The agents we ship that include human review at strategic points get higher user trust and catch more edge cases than the ones that try to handle everything autonomously. The art is designing the review flow to feel like collaboration rather than a quality gate.</p>
+
+        <p>Lesson six: cost discipline pays compound dividends. Every token costs money. Every retry costs money. Every redundant tool call costs money. Aggressive caching, prompt truncation, and structured outputs (instead of conversational ones) can cut your per-request cost by 60-80% without measurably impacting quality.</p>
+
+        <p>Lesson seven: latency budgets are a forcing function. Set a per-request latency budget and engineer to it. We target 2 seconds for interactive tasks, 30 seconds for background tasks. This rules out a lot of patterns — sequential tool calls, multi-turn reasoning, slow models — that look good in demos but fail in production.</p>
+
+        <p>Lesson eight: the model is the easiest part. Most of the engineering complexity is in the surrounding infrastructure: tool execution, state management, retry logic, error recovery, monitoring, deployment. Plan for that. The hot model of the moment will change every six months, but your infrastructure has to last.</p>
+
+        <p>What's still hard: long-horizon tasks (multi-day workflows with intermediate verification), multi-agent coordination (specialization works, but coordination overhead is real), domain-specific evaluation (general benchmarks don't predict success on your specific task), and cost prediction (the same prompt can cost wildly different amounts depending on context length).</p>
+
+        <p>If you're building agents in 2026, our advice: start small, instrument everything, iterate fast, and don't fall in love with any particular model. The competitive advantage is in the surrounding system, not the model itself.</p>
+      </section>
+    </article>
+  </main>
+</body>
+</html>

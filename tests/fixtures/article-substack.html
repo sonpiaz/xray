@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>How LLMs Actually Work | Demo Newsletter</title>
+  <link rel="canonical" href="https://newsletter.example.com/p/how-llms-actually-work">
+  <meta property="og:title" content="How LLMs Actually Work">
+  <meta property="og:description" content="A deep dive into the architecture, training data, and emergent behavior of large language models — from someone who's actually shipped them.">
+  <meta property="og:image" content="https://newsletter.example.com/img/cover.png">
+  <meta property="og:url" content="https://newsletter.example.com/p/how-llms-actually-work">
+  <meta property="og:site_name" content="Demo Newsletter">
+  <meta name="description" content="A deep dive into the architecture, training data, and emergent behavior of large language models.">
+  <meta name="author" content="Jane Smith">
+  <meta property="article:author" content="Jane Smith">
+  <meta property="article:published_time" content="2026-05-15T14:30:00Z">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="How LLMs Actually Work">
+</head>
+<body class="newsletter-body">
+  <nav class="navbar">
+    <a href="/">Home</a>
+    <a href="/archive">Archive</a>
+    <a href="/about">About</a>
+  </nav>
+
+  <article class="post">
+    <header class="post-header">
+      <h1>How LLMs Actually Work</h1>
+      <div class="post-meta">
+        <a rel="author" href="/jane-smith">Jane Smith</a>
+        <time datetime="2026-05-15T14:30:00Z">May 15, 2026</time>
+      </div>
+    </header>
+
+    <div class="post-content">
+      <p>Large language models have captured the public imagination, but most explanations either oversimplify or hide behind jargon. This essay aims to thread the needle: technical enough to be useful, accessible enough to be read.</p>
+
+      <p>At the heart of every modern LLM is the transformer architecture, introduced in the 2017 paper "Attention Is All You Need." The key innovation is self-attention: a mechanism that lets the model weigh the relevance of every input token against every other token. This sounds expensive, and it is — attention is quadratic in sequence length — but the parallelism it enables on modern GPUs more than pays for itself.</p>
+
+      <p>Training happens in three broad phases. First, pretraining on a massive corpus of text from the internet, books, and code. This is where the model learns grammar, world knowledge, and reasoning patterns. Second, supervised fine-tuning on curated examples of desired behavior. Third, reinforcement learning from human feedback (RLHF), which aligns the model's outputs with human preferences.</p>
+
+      <p>The most interesting thing about LLMs is what they do well that no one explicitly programmed them to do. They can summarize, translate, code, write poetry, debate philosophy, and explain jokes. These capabilities emerge from scale: more parameters, more data, more compute. The exact mechanism is still debated, but the empirical scaling laws are remarkably consistent.</p>
+
+      <p>One persistent misconception is that bigger is always better. Recent research suggests that smaller, well-trained models can match larger ones on many tasks. The bottleneck is increasingly data quality and training methodology, not raw parameter count. The future of LLM research likely lies in better data, better training, and more efficient architectures rather than just scaling up.</p>
+
+      <p>Another misconception is that LLMs "understand" the way humans do. They don't. They predict the next token based on patterns in their training data. This is enough to produce useful behavior across an enormous range of tasks, but it's not consciousness or genuine reasoning in any deep sense. Understanding the difference is crucial for both using LLMs effectively and reasoning about their failures.</p>
+
+      <p>Looking ahead, the most exciting frontiers are not just bigger models but better training methods, multimodal integration, longer context windows, and tighter coupling with external tools and memory systems. The LLMs of 2030 will likely be smaller, faster, more reliable, and integrated into nearly every software product.</p>
+
+      <p>The takeaway: LLMs are powerful tools built on a small number of conceptually simple ideas — attention, scale, and feedback — combined with relentless engineering. Understanding the basics demystifies them without diminishing how remarkable they are.</p>
+    </div>
+  </article>
+
+  <aside class="newsletter-signup">
+    <h3>Subscribe to Demo Newsletter</h3>
+    <p>Get the next essay in your inbox.</p>
+    <form><input type="email" placeholder="you@example.com"><button>Subscribe</button></form>
+  </aside>
+
+  <footer class="footer">
+    <p>&copy; 2026 Demo Newsletter</p>
+  </footer>
+</body>
+</html>

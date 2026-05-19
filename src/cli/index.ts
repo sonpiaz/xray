@@ -50,7 +50,7 @@ export async function runCli(argv: string[]): Promise<number> {
   cli
     .command(
       'article <url>',
-      'Analyze an article URL (P3.0: X Article only; external HTML lands in P3.1)',
+      'Analyze an article URL (X Article, Substack, Medium, dev.to, any HTML)',
     )
     .option('--json', 'Output JSON instead of Markdown')
     .option('-o, --output <path>', 'Write output to a file')

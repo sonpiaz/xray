@@ -482,12 +482,6 @@ describe('analyzeArticle orchestrator', () => {
     });
   }
 
-  it('throws ArticleError on non-X-article URL', async () => {
-    await expect(analyzeArticle({ url: 'https://substack.com/p/something' })).rejects.toThrow(
-      ArticleError,
-    );
-  });
-
   it('throws ArticleError on unclassifiable URL', async () => {
     await expect(analyzeArticle({ url: 'not-a-url' })).rejects.toThrow(ArticleError);
   });

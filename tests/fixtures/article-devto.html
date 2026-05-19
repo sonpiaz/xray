@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TypeScript Patterns I Use Every Day - DEV Community</title>
+  <link rel="canonical" href="https://dev.to/devuser/typescript-patterns-i-use-every-day-2026">
+  <meta property="og:title" content="TypeScript Patterns I Use Every Day">
+  <meta property="og:description" content="Practical TypeScript patterns I reach for constantly: discriminated unions, branded types, exhaustiveness checks, and more.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://dev.to/devuser/typescript-patterns-i-use-every-day-2026">
+  <meta property="article:published_time" content="2026-03-10T12:00:00Z">
+  <meta name="author" content="Dev User">
+</head>
+<body>
+  <header>
+    <nav class="navbar">DEV.to</nav>
+  </header>
+
+  <main>
+    <article>
+      <h1>TypeScript Patterns I Use Every Day</h1>
+      <div itemprop="author">Dev User</div>
+      <time datetime="2026-03-10T12:00:00Z">March 10, 2026</time>
+
+      <div itemprop="articleBody">
+        <p>After eight years of writing TypeScript professionally, I've narrowed down to a small set of patterns that I use in almost every codebase. They're not flashy or clever — they're just reliably useful. Here are the ones I reach for most often.</p>
+
+        <h2>1. Discriminated unions for state</h2>
+        <p>When you have a value that can be in one of several distinct states, model it as a discriminated union with a literal type field. This gives you exhaustiveness checking and makes invalid states unrepresentable. The classic example is request state: idle, loading, success with data, error with message. Make each variant carry only the fields relevant to that state.</p>
+
+        <h2>2. Branded types for IDs</h2>
+        <p>Wrap your IDs in branded types so you can't accidentally pass a UserId where a PostId is expected. The cost is one tiny utility type and a constructor function; the payoff is catching entire categories of bugs at compile time. Especially valuable in codebases with many entity types.</p>
+
+        <h2>3. Exhaustiveness checks with never</h2>
+        <p>When switching on a discriminated union, add a default case that assigns to a never-typed variable. If you forget to handle a variant, the compiler will catch it. This is the single most useful pattern I know for keeping switch statements correct as the codebase evolves.</p>
+
+        <h2>4. Result types over thrown errors</h2>
+        <p>For operations that can fail in predictable ways, return a Result type rather than throwing. This makes failure handling explicit and forces callers to think about the error case. Reserve throws for genuinely unexpected conditions (programmer errors, infrastructure failures).</p>
+
+        <h2>5. Const assertions for literal data</h2>
+        <p>Use as const liberally for arrays, tuples, and objects that should be treated as literal data. This unlocks better type inference, more precise union types, and gives the compiler more information to work with. It's the easiest way to get strong typing from data you already have.</p>
+
+        <h2>6. Type predicates for narrowing</h2>
+        <p>Write small type predicate functions to narrow types in a reusable way. They're particularly valuable for filtering arrays: array.filter(isNonNull) tells the compiler that the result has no nulls. Without the predicate, you'd need to assert or coerce.</p>
+
+        <h2>7. Satisfies for type-checked literals</h2>
+        <p>The satisfies operator lets you check that a value conforms to a type without widening it to that type. This preserves the literal type for inference while still catching errors. It's especially useful for configuration objects and route maps where you want both the type check and the precise inferred shape.</p>
+
+        <h2>8. Const enums replaced with const objects</h2>
+        <p>Skip const enums in favor of const-asserted objects. They generate cleaner JavaScript, work better with isolated modules compilation, and give you the same type safety with fewer footguns. Const enums have edge cases around ambient declarations and module boundaries that const objects avoid entirely.</p>
+
+        <h2>9. Generic type aliases for common shapes</h2>
+        <p>Keep a small library of generic type aliases for shapes you use often: Result, Option, NonEmptyArray, DeepPartial, ValueOf. These make your type signatures more readable and codify common patterns. Resist the urge to over-abstract — only add a generic when you'd use it three or more times.</p>
+
+        <h2>10. Strict null checking, always</h2>
+        <p>This isn't a pattern so much as a baseline requirement. Strict null checks are the single highest-leverage TypeScript setting. The retrofit cost is real but pays back within weeks. Without strict nulls, half of TypeScript's value evaporates.</p>
+
+        <p>None of these are clever. None require deep type system wizardry. But together they form a foundation that makes day-to-day TypeScript work smoother, safer, and more predictable. If you're early in your TypeScript journey, start here.</p>
+      </div>
+    </article>
+  </main>
+</body>
+</html>

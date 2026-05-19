@@ -1,12 +1,15 @@
 import {
   ArticleError,
   ArticleParseError,
+  canonicalizeArticleUrl,
   detectArticleSource,
+  fetchExternalArticle,
   getCachedArticleBody,
   getCachedArticleSummary,
   parseXArticle,
   putCachedArticleBody,
   putCachedArticleSummary,
+  resolveCanonicalArticleUrl,
   summarizeArticle,
 } from '../article/index.ts';
 /**
@@ -75,6 +78,10 @@ export type ArticleAnalyzeOptions = {
 /**
  * Test seam — same pattern as `intelligence/video.ts`. Tests monkey-patch
  * these to stub out network / disk work without changing the control flow.
+ *
+ * P3.1 — Adds `fetchExternalArticle` + `resolveCanonicalArticleUrl` so the
+ * external-html path can be unit-tested without standing up a real HTTP
+ * server or Playwright instance.
  */
 export const _orchestratorDeps = {
   parseXArticle,
@@ -83,13 +90,22 @@ export const _orchestratorDeps = {
   putCachedArticleBody,
   getCachedArticleSummary,
   putCachedArticleSummary,
+  fetchExternalArticle,
+  resolveCanonicalArticleUrl,
 };
 
 /**
- * Orchestrate article analysis. The only currently-supported source is
- * `x-article` — pass an `https://x.com/i/article/<id>` URL or call from
- * a thread context that already has the card. Other sources throw
- * `ArticleError`; P3.1 will wire them up.
+ * Orchestrate article analysis.
+ *
+ * P3.0 — `x-article` path: detect → parseXArticle → summarize.
+ * P3.1 — `external-html` path: detect → canonicalize → fetchExternalArticle
+ *        → summarize. Same caching layer; the canonical URL doubles as
+ *        the cache key so different tracking-param variants of the same
+ *        article share a row.
+ *
+ * Unrecoverable failures throw `ArticleError`. Recoverable failures
+ * degrade to a partial `ArticleSummary` with `partial: true` and
+ * human-readable strings in `errors[]`.
  */
 export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<ArticleSummary> {
   const url = opts.url;
@@ -97,16 +113,30 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
   if (!source) {
     throw new ArticleError(`Not a valid article URL: ${url}`);
   }
-  if (source !== 'x-article') {
-    throw new ArticleError(
-      `Article source '${source}' is not yet supported. P3.0 only handles X Articles. External HTML lands in P3.1.`,
-    );
-  }
 
   const cfg = loadConfig();
   const errors: string[] = [];
   let partial = false;
   const cost: ArticleCostBreakdown = {};
+
+  // ─── Stage 0: canonicalize URL (external path only) ────────────────
+  // For external HTML we resolve shortlinks + strip tracking params so
+  // the cache row + downstream `canonicalUrl` field reflect the real
+  // article identity. X Article URLs are already stable (the article ID
+  // path segment is the identity) — no canonicalization needed.
+  let cacheKeyUrl = url;
+  let canonicalUrl = url;
+  if (source === 'external-html') {
+    try {
+      canonicalUrl = await _orchestratorDeps.resolveCanonicalArticleUrl(url);
+      cacheKeyUrl = canonicalUrl;
+    } catch (err) {
+      // Canonicalization is best-effort — fall back to the raw URL.
+      logger.debug('article canonicalize failed, using raw url', { url, err: String(err) });
+      canonicalUrl = canonicalizeArticleUrl(url);
+      cacheKeyUrl = canonicalUrl;
+    }
+  }
 
   // ─── Stage 1: cache check (summary first, body second) ─────────────
   // If a summary exists keyed on (url, tweetContextHash) and we're not
@@ -117,63 +147,103 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
 
   if (!opts.noCache && !opts.raw) {
     const cachedSummary = _orchestratorDeps.getCachedArticleSummary({
-      urlCanonical: url,
+      urlCanonical: cacheKeyUrl,
       tweetContextHash,
     });
     if (cachedSummary) {
-      logger.debug('article cache hit: summary', { url, tweetContextHash });
+      logger.debug('article cache hit: summary', { url: cacheKeyUrl, tweetContextHash });
       return cachedSummary;
     }
   }
 
-  // ─── Stage 2: resolve body (cache → cardData → fetch) ──────────────
+  // ─── Stage 2: resolve body (cache → cardData/fetch) ────────────────
   let body: ArticleBody | undefined;
   let bodyFromCache = false;
 
   if (!opts.noCache) {
-    const cachedBody = _orchestratorDeps.getCachedArticleBody(url);
+    const cachedBody = _orchestratorDeps.getCachedArticleBody(cacheKeyUrl);
     if (cachedBody) {
       body = cachedBody;
       bodyFromCache = true;
-      logger.debug('article cache hit: body', { url });
+      logger.debug('article cache hit: body', { url: cacheKeyUrl });
     }
   }
 
   if (!body) {
-    let cardPayload: unknown = opts.cardData;
-    if (cardPayload === undefined) {
-      // Standalone path — we need the card. The X Article URL is anchored
-      // under a tweet; let the existing thread fetcher walk the page and
-      // hand us back the tweet's `raw.card` payload via the parser.
-      try {
-        cardPayload = await fetchCardForArticleUrl(url);
-      } catch (err) {
-        // Hard failure — no card means no body. Surface as a partial
-        // result so the caller still gets a schema-valid object.
-        const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`fetch card: ${msg}`);
-        return finalize({
-          url,
-          source,
-          body: emptyBody(),
-          summary: undefined,
-          keyPoints: [],
-          partial: true,
-          errors,
-          cost,
-        });
+    if (source === 'x-article') {
+      // ── X Article path (P3.0) ──────────────────────────────────────
+      let cardPayload: unknown = opts.cardData;
+      if (cardPayload === undefined) {
+        // Standalone path — we need the card. The X Article URL is anchored
+        // under a tweet; let the existing thread fetcher walk the page and
+        // hand us back the tweet's `raw.card` payload via the parser.
+        try {
+          cardPayload = await fetchCardForArticleUrl(url);
+        } catch (err) {
+          // Hard failure — no card means no body. Surface as a partial
+          // result so the caller still gets a schema-valid object.
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`fetch card: ${msg}`);
+          return finalize({
+            url,
+            canonicalUrl,
+            source,
+            body: emptyBody(),
+            summary: undefined,
+            keyPoints: [],
+            partial: true,
+            errors,
+            cost,
+          });
+        }
       }
-    }
 
-    try {
-      body = _orchestratorDeps.parseXArticle(cardPayload);
-    } catch (err) {
-      if (err instanceof ArticleParseError) {
-        errors.push(`parse: ${err.message}`);
+      try {
+        body = _orchestratorDeps.parseXArticle(cardPayload);
+      } catch (err) {
+        if (err instanceof ArticleParseError) {
+          errors.push(`parse: ${err.message}`);
+          return finalize({
+            url,
+            canonicalUrl,
+            source,
+            body: emptyBody(),
+            summary: undefined,
+            keyPoints: [],
+            partial: true,
+            errors,
+            cost,
+          });
+        }
+        throw err;
+      }
+    } else {
+      // ── External HTML path (P3.1) ──────────────────────────────────
+      try {
+        const fetched = await _orchestratorDeps.fetchExternalArticle({ url });
+        body = fetched.body;
+        // Carry over partial flag + tier escalation warnings.
+        if (fetched.partial) partial = true;
+        if (fetched.errors && fetched.errors.length > 0) {
+          for (const e of fetched.errors) errors.push(`fetch: ${e}`);
+        }
+        // If fetch resolved to a more authoritative URL (e.g., t.co
+        // expanded mid-fetch or a redirect chain), prefer it.
+        if (fetched.canonicalUrl && fetched.canonicalUrl !== cacheKeyUrl) {
+          const reCanonical = canonicalizeArticleUrl(fetched.canonicalUrl);
+          if (reCanonical !== cacheKeyUrl) {
+            canonicalUrl = reCanonical;
+            cacheKeyUrl = reCanonical;
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`fetch: ${msg}`);
         return finalize({
           url,
+          canonicalUrl,
           source,
-          body: emptyBody(),
+          body: emptyExternalBody(),
           summary: undefined,
           keyPoints: [],
           partial: true,
@@ -181,15 +251,16 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
           cost,
         });
       }
-      throw err;
     }
 
     // Cache the body (write-through even when noCache reads were skipped
     // — the next run benefits).
-    try {
-      _orchestratorDeps.putCachedArticleBody({ urlCanonical: url, source, body });
-    } catch (err) {
-      logger.debug('article body cache write failed', { err: String(err) });
+    if (body) {
+      try {
+        _orchestratorDeps.putCachedArticleBody({ urlCanonical: cacheKeyUrl, source, body });
+      } catch (err) {
+        logger.debug('article body cache write failed', { err: String(err) });
+      }
     }
   }
 
@@ -214,7 +285,7 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
     } else {
       try {
         const summarizeOpts: Parameters<typeof summarizeArticle>[1] = {
-          urlCanonical: url,
+          urlCanonical: cacheKeyUrl,
         };
         if (opts.synthesisModel !== undefined) summarizeOpts.model = opts.synthesisModel;
         if (opts.noCache) summarizeOpts.noCache = true;
@@ -234,6 +305,7 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
 
   const result = finalize({
     url,
+    canonicalUrl,
     source,
     body: (body ?? emptyBody()) as ArticleBody,
     summary,
@@ -249,7 +321,7 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
   if (!opts.noCache && !opts.raw && summary) {
     try {
       _orchestratorDeps.putCachedArticleSummary({
-        urlCanonical: url,
+        urlCanonical: cacheKeyUrl,
         tweetContextHash,
         summary: result,
         model: modelUsed ?? cfg.kyma.model,
@@ -262,7 +334,7 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
   // Touch `bodyFromCache` so the closure doesn't warn-unused. We don't
   // currently surface it but it's useful in debug logs:
   if (bodyFromCache) {
-    logger.debug('article body served from cache', { url });
+    logger.debug('article body served from cache', { url: cacheKeyUrl });
   }
 
   return result;
@@ -278,6 +350,15 @@ function emptyBody(): ArticleBody {
     text: '',
     wordCount: 0,
     contentSource: 'x-article-card',
+  };
+}
+
+function emptyExternalBody(): ArticleBody {
+  return {
+    title: 'Untitled',
+    text: '',
+    wordCount: 0,
+    contentSource: 'cheerio-fallback',
   };
 }
 
@@ -341,6 +422,7 @@ async function fetchCardForArticleUrl(url: string): Promise<unknown> {
 
 function finalize(args: {
   url: string;
+  canonicalUrl?: string;
   source: ArticleSource;
   body: ArticleBody;
   summary?: string;
@@ -360,7 +442,7 @@ function finalize(args: {
   // emitted JSON. Mirrors the pattern in `intelligence/video.ts`.
   const out: ArticleSummary = {
     url: args.url,
-    canonicalUrl: args.url,
+    canonicalUrl: args.canonicalUrl ?? args.url,
     source: args.source,
     body: args.body,
     keyPoints: args.keyPoints,
