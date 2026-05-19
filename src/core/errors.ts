@@ -87,3 +87,55 @@ export class AuthWallError extends XRayError {
     this.name = 'AuthWallError';
   }
 }
+
+/**
+ * P2.0 — Video pipeline errors. Each stage throws a distinct subclass so
+ * the orchestrator in `src/intelligence/video.ts` can catch one stage's
+ * failure and continue with a partial report instead of dying.
+ */
+export class VideoDownloadError extends XRayError {
+  constructor(message: string, opts: { transient?: boolean; cause?: unknown } = {}) {
+    super('VIDEO_DOWNLOAD', message, opts);
+    this.name = 'VideoDownloadError';
+  }
+}
+
+export class VideoAudioExtractError extends XRayError {
+  constructor(message: string, opts: { cause?: unknown } = {}) {
+    super('VIDEO_AUDIO_EXTRACT', message, opts);
+    this.name = 'VideoAudioExtractError';
+  }
+}
+
+export class VideoTranscribeError extends XRayError {
+  constructor(message: string, opts: { transient?: boolean; cause?: unknown } = {}) {
+    super('VIDEO_TRANSCRIBE', message, opts);
+    this.name = 'VideoTranscribeError';
+  }
+}
+
+export class VideoFramesError extends XRayError {
+  constructor(message: string, opts: { cause?: unknown } = {}) {
+    super('VIDEO_FRAMES', message, opts);
+    this.name = 'VideoFramesError';
+  }
+}
+
+export class VideoVisionError extends XRayError {
+  constructor(message: string, opts: { transient?: boolean; cause?: unknown } = {}) {
+    super('VIDEO_VISION', message, opts);
+    this.name = 'VideoVisionError';
+  }
+}
+
+/**
+ * Raised when an external binary (ffmpeg, yt-dlp) is missing from PATH.
+ * Carries install hints in the message so the caller doesn't have to know
+ * the platform.
+ */
+export class DependencyError extends XRayError {
+  constructor(message: string, opts: { cause?: unknown } = {}) {
+    super('DEPENDENCY_MISSING', message, opts);
+    this.name = 'DependencyError';
+  }
+}
