@@ -23,9 +23,9 @@ See: `~/.claude/projects/-Users-sonpiaz/memory/feedback_invisible_auth_escalatio
 
 ## 1. Goals
 
-1. Make `xray thread <url>` (no flags) produce useful output via SSR HTML scraping — no Playwright launch, no cookies, no auth. Sub-2s latency for cached-or-fast-network hits.
-2. Implement a 4-tier escalation chain (SSR -> anonymous Playwright -> silent cookie inject -> interactive auth) that runs transparently. The user never chooses a tier.
-3. Silently read existing Chromium-family browser cookies (Chrome, Brave, Edge) on macOS, decrypt via Keychain, and inject into Playwright context — zero user interaction.
+1. Make `xray thread <url>` (no flags) produce useful output without the user doing anything — try Chrome/Brave/Edge cookies silently first (full data), fall back to SSR scrape (root post only) if no cookies, surface auth instruction only when both invisible paths fail.
+2. Implement a 3-tier escalation chain (Cookie+PW → SSR fallback → saved `xray auth`) that runs transparently. The user never chooses a tier.
+3. Silently read existing Chromium-family browser cookies (Chrome, Brave, Edge) on macOS, decrypt via Keychain, and inject into Playwright context — zero user interaction beyond one-time macOS "Always Allow" Keychain prompt.
 4. Add `xray auth --status` diagnostics subcommand so users can inspect what cookie sources are available and whether `storageState.json` exists.
 5. Surface a `coverage.tier` field in every report so downstream agents know how the data was obtained.
 
@@ -49,17 +49,19 @@ See: `~/.claude/projects/-Users-sonpiaz/memory/feedback_invisible_auth_escalatio
 
 | Flag / Command | Type | Default | Behavior (P1.5) | Change from P1 |
 |---|---|---|---|---|
-| `xray thread <url>` (no flags) | - | SSR-only (Tier 1) | Cheerio-based static HTML parse. No Playwright. `coverage.tier = 'ssr'`. | **BREAKING**: P1 default was anonymous Playwright. |
-| `--depth <N>` | integer | `3` | Triggers Tier 2+ escalation if SSR insufficient. | Unchanged |
-| `--max-replies <N>` | integer | `50` | Triggers Tier 2+ escalation. | Unchanged |
-| `--deep` | boolean | `false` | Triggers Tier 2+ (needs full reply tree). | Unchanged |
-| `--mode auto` | string | `auto` | 4-tier escalation chain (SSR -> anon PW -> cookie -> auth). | **NEW behavior**: `auto` now starts at SSR, not anon Playwright. |
-| `--mode anon` | string | - | Force anonymous Playwright (Tier 2 only, skip SSR). | Unchanged |
-| `--mode auth` | string | - | Force authenticated Playwright (Tier 4 storageState). | Unchanged |
+| `xray thread <url>` (no flags) | - | Auto escalation: Cookie+PW → SSR → saved auth | Default tries Chrome/Brave/Edge cookies first; falls back to SSR if no cookies; surfaces `xray auth` instruction only if both fail. | **BREAKING**: Phase 1 default was unconditional Playwright (and failed on auth wall). |
+| `--depth <N>` | integer | `3` | Reply tree depth. Only meaningful when Tier 1 (cookies) succeeds — SSR ignores this. | Unchanged |
+| `--max-replies <N>` | integer | `50` | Max replies. Same Tier 1 caveat as above. | Unchanged |
+| `--deep` | boolean | `false` | Triggers per-subtree synthesis. Tier 1 only. | Unchanged |
+| `--mode auto` | string | `auto` | Run the 3-tier escalation chain (cookie → SSR → saved auth). | **NEW behavior** vs P1's auto |
+| `--mode ssr` | string | - | Force SSR only — never touch cookies/browser/auth. Useful for headless servers, CI, debugging. | **NEW** |
+| `--mode cookie` | string | - | Force Cookie+PW — no SSR fallback. Fails hard if cookies unavailable. | **NEW** |
+| `--mode auth` | string | - | Force authenticated Playwright via saved `storageState.json`. | Unchanged |
+| `--mode anon` | (removed) | - | — | **REMOVED**: anonymous Playwright tier dropped; same data as SSR but slower. |
 | `--no-cache` | boolean | `false` | Bypass cache. | Unchanged |
 | `--raw` | boolean | `false` | Skip LLM analysis. | Unchanged |
 | `--json` | boolean | `false` | JSON output. | Unchanged |
-| `xray auth` | command | - | Interactive Playwright login, save storageState. | Unchanged (Tier 4 last resort). |
+| `xray auth` | command | - | Interactive Playwright login, save storageState. | Unchanged (Tier 3 last resort). |
 | `xray auth --status` | command | - | Print detected cookie sources + storageState presence. | **NEW** |
 
 ### 3.2 MCP Surface
@@ -67,7 +69,7 @@ See: `~/.claude/projects/-Users-sonpiaz/memory/feedback_invisible_auth_escalatio
 | Arg | Type | Default | Change |
 |---|---|---|---|
 | `url` | `z.string().url()` | required | Unchanged |
-| `mode` | `z.enum(['auto','anon','auth'])` | `'auto'` | `auto` now means 4-tier escalation starting at SSR |
+| `mode` | `z.enum(['auto','ssr','cookie','auth'])` | `'auto'` | `auto` = 3-tier escalation (cookie → SSR → saved auth). `'anon'` REMOVED. |
 | `noCache` | `z.boolean().optional()` | `false` | Unchanged |
 | `raw` | `z.boolean().optional()` | `false` | Unchanged |
 | `depth` | `z.number()` | `3` | Unchanged |
@@ -96,203 +98,212 @@ When no Conversation Analysis section exists (e.g., SSR-only with no classificat
 
 ## 4. Tier Architecture
 
+**Architecture revision (post-P1.5.0 finding):** Empirical testing showed that X in 2026 strips replies, quote tweets, and engagement metrics from logged-out SSR HTML — only the OG card (root post text + author + 1 image) survives. The "anonymous Playwright" tier became redundant (same data as SSR, just slower). The tier ordering is therefore **inverted from the initial spec**: the richest invisible path (cookie inject) runs first; SSR becomes a thin fallback when no cookies are available.
+
 ```
                         xray thread <url>
                               |
                     +---------+---------+
                     |                   |
-              mode = auto          mode = anon/auth
+              mode = auto          mode = ssr/cookie/auth
                     |                   |
                     v                   v
-         +-------------------+    (skip to Tier 2 or 4)
-         |    TIER 1: SSR    |
-         |  cheerio scrape   |
-         |  no browser, no   |
-         |  cookies, no auth |
-         +--------+----------+
-                  |
-        result sufficient?
-         (root post found +
-          enough replies for
-          the requested depth)
-           /            \
-         YES             NO
-          |               |
-     return result   +----v--------------+
-     tier = 'ssr'    |   TIER 2: ANON    |
-                     | Playwright headless|
-                     | no cookies injected|
-                     +--------+----------+
-                              |
-                    result sufficient?
-                     (no auth wall,
-                      replies returned)
-                       /            \
-                     YES             NO (AuthRequiredError)
-                      |               |
-                 return result   +----v-----------------+
-                 tier = 'anon'   |   TIER 3: COOKIE     |
-                                 | read Chrome/Brave/Edge|
-                                 | SQLite cookies, decrypt|
-                                 | via Keychain, inject  |
-                                 | into Playwright context|
-                                 +--------+-------------+
-                                          |
-                                cookies found
-                                 & injected?
-                                   /        \
-                                 YES         NO (no browser
-                                  |           installed or
-                                  |           no X cookies)
-                             return result    |
-                             tier = 'cookie'  |
-                                          +---v-----------------+
-                                          |   TIER 4: AUTH      |
-                                          | storageState.json   |
-                                          | from `xray auth`    |
-                                          | (interactive login) |
-                                          +---------+-----------+
-                                                    |
-                                           storageState exists?
-                                             /            \
-                                           YES             NO
-                                            |               |
-                                       return result   throw FetchError
-                                       tier = 'auth'   "Run `xray auth`"
+         +------------------------+ (direct override — skip chain)
+         |   TIER 1: COOKIE+PW   |
+         |  read Chrome/Brave/   |
+         |  Edge SQLite cookies, |
+         |  decrypt via Keychain,|
+         |  inject into          |
+         |  Playwright context   |
+         +-----------+-----------+
+                     |
+            cookies found
+            & fetch succeeds?
+              /         \
+            YES          NO (no browser / no X cookies
+             |              / cookies expired
+        return result        / Keychain access denied)
+        tier = 'cookie'      |
+                       +-----v---------------+
+                       |   TIER 2: SSR       |
+                       |  (FALLBACK)         |
+                       |  cheerio static     |
+                       |  HTML scrape — OG   |
+                       |  card only (root +  |
+                       |  author + 1 image)  |
+                       +-----+---------------+
+                             |
+                  root post found?
+                    /         \
+                  YES          NO (login wall, deleted tweet)
+                   |              |
+              return result       |
+              tier = 'ssr'        |
+              partial = true      |
+                          +-------v---------------+
+                          |   TIER 3: AUTH        |
+                          |  (LAST RESORT)        |
+                          |  check storageState   |
+                          |  .json (saved by      |
+                          |  `xray auth`)         |
+                          +-------+---------------+
+                                  |
+                       storageState exists?
+                          /         \
+                        YES          NO
+                         |            |
+                    fetch with    throw FetchError
+                    storageState  "This content needs login.
+                    tier = 'auth' Run `xray auth`"
 ```
 
 ### 4.1 Escalation Trigger Conditions
 
 | From Tier | Escalates to | Trigger |
 |-----------|-------------|---------|
-| SSR (1) | Anon PW (2) | Root post not found in HTML, OR user requested `--depth > 1` / `--max-replies > SSR_VISIBLE_LIMIT` / `--deep`, OR SSR returned zero replies |
-| Anon PW (2) | Cookie (3) | `AuthRequiredError` thrown (login wall / 401 / 403 / redirect to `/i/flow/login`) |
-| Cookie (3) | Auth (4) | No Chromium cookies found, OR cookies expired, OR cookie-injected fetch still hit auth wall |
-| Auth (4) | Error | `storageState.json` missing → throw `FetchError` with "Run `xray auth`" message |
+| Cookie+PW (1) | SSR (2) | No Chromium browsers installed; OR no `host_key LIKE '%x.com'` rows in any Cookies DB; OR Keychain access denied by user; OR cookies present but fetch still hits auth wall (expired session); OR Chrome `os_crypt` decrypt error |
+| SSR (2) | Auth (3) | Root post not parsed (login wall, deleted tweet, age-gated, protected account, HTML structure broken) |
+| Auth (3) | Error | `storageState.json` missing → throw `FetchError` with explicit "Run `xray auth`" guidance |
 
-### 4.2 When SSR is Sufficient (no escalation)
+### 4.2 Why Cookie+PW is the Primary Tier
 
-SSR is sufficient when ALL of these are true:
-- `depth` is 1 (default) or unset AND `maxReplies` <= SSR visible count AND `--deep` is false
-- The root post was found in the static HTML
-- At least some replies were parsed from the SSR HTML
+The original spec assumed SSR would carry replies and metrics, making it the natural zero-friction default. P1.5.0 empirical testing disproved this — X 2026 SSR returns OG card only. The principle (invisible default per [[feedback_invisible_auth_escalation]]) still holds, but the *implementation* of "invisible" must now mean "use cookies the user already has in Chrome silently."
 
-In practice: `xray thread <url>` with no flags will almost always stop at Tier 1 because the default behavior only needs the root post + whatever replies X renders in SSR.
+Cookie+PW is invisible in the same way SSR was supposed to be:
+- User already logged into X on Chrome (95% of target users)
+- Chrome stores `auth_token` + `ct0` cookies persistently
+- XRay reads them silently (one-time macOS Keychain "Always Allow" prompt)
+- Playwright fetches with cookies injected → full GraphQL TweetDetail response → all data
 
-### 4.3 SSR Visible Limit
+The user does nothing. They get full thread data (replies, metrics, quote tweets) on first invocation. Auth UI never appears.
 
-X's SSR HTML typically includes the root post and 5-20 top-level replies (varies). Define constant `SSR_VISIBLE_LIMIT = 15`. If `maxReplies > SSR_VISIBLE_LIMIT` or `depth > 1`, auto-escalate to Tier 2.
+### 4.3 When SSR Fallback Kicks In
+
+SSR is the fallback when Tier 1 cannot serve the request:
+- User has no Chromium browser installed (Linux server, headless CI, Firefox-only user)
+- User has Chrome but is not logged into X
+- User denied Keychain access
+- Cookies are expired (session ended) and X still returns auth wall
+
+In these cases, SSR returns whatever it can — typically just the root post text + author + image. The result is marked `partial=true` with a clear `partialReason`. The agent caller (Grok/Claude) sees the partial flag and decides whether to surface the limitation to its user.
+
+For root-only use cases ("what does this tweet say?"), SSR is sufficient. For anything requiring replies/metrics, SSR is degraded mode.
+
+### 4.4 Direct-Mode Overrides
+
+Users can bypass the escalation chain with explicit `--mode` flags:
+- `--mode ssr` — SSR only, never touch cookies/browser/auth. Useful for headless servers, CI, or debugging.
+- `--mode cookie` — Cookie+PW only, no SSR fallback. Fails hard if cookies unavailable. Useful for guaranteeing full data.
+- `--mode auth` — Use saved `storageState.json` directly, skip cookies. Useful when storageState is fresher than Chrome cookies.
+- `--mode auto` (default) — Run the 3-tier escalation chain above.
 
 ---
 
 ## 5. Per-Tier Specification
 
-### 5.1 Tier 1 — SSR Scrape
-
-**File:** `src/fetcher/ssr.ts` (NEW)
-
-**Trigger:** Default path for `mode: 'auto'` when no depth/reply escalation flags are set.
-
-**What it fetches:**
-- HTTP GET to `https://x.com/{user}/status/{id}` with standard browser User-Agent
-- Parse the returned HTML with `cheerio` (new dependency)
-- Extract from server-rendered HTML:
-  - Root post: author handle, display name, text, timestamp, engagement metrics (likes/reposts/replies/views)
-  - Visible replies: author, text, basic metrics (X SSR renders a subset of replies)
-  - Quote tweets (if visible in SSR)
-  - `og:*` meta tags for supplemental metadata
-
-**Capabilities:**
-- Sub-second fetch (no browser launch overhead)
-- Works behind corporate proxies that block WebSocket (Playwright needs WS)
-- Zero local state required
-- Works in CI/CD environments without Playwright installed
-
-**Limitations:**
-- Cannot paginate (no cursor-based GraphQL)
-- Limited reply count (5-20 depending on X's SSR rendering)
-- No nested replies (only top-level visible)
-- X may serve a login wall for some content (protected accounts, age-gated, NSFW)
-- Metrics may be slightly stale (SSR vs real-time GraphQL)
-
-**Cache strategy:** Same `{root_id}` key in threads table. Upsert overwrites if richer (Tier 2+ result replaces Tier 1).
-
-**Error modes:**
-- HTTP 4xx/5xx → escalate to Tier 2
-- No root post found in HTML (login wall, deleted tweet) → escalate to Tier 2
-- HTML structure changed (cheerio selectors broken) → escalate to Tier 2 + log warning
-
-**Escalation criteria:** Root post not parsed OR user requested more data than SSR can provide.
-
-### 5.2 Tier 2 — Anonymous Playwright
-
-**File:** `src/fetcher/thread.ts` (existing — current `anon` mode)
-
-**Trigger:** SSR failed or insufficient, AND no auth needed yet.
-
-**What it fetches:** Full GraphQL TweetDetail via Playwright response interception. Cursor-based pagination for reply tree.
-
-**Capabilities:** Full reply tree (depth N, up to maxReplies), quote tweets, nested replies, real-time metrics.
-
-**Limitations:** X may throw auth wall (login redirect, 401, 403) for some content.
-
-**Cache strategy:** Same `{root_id}` key. Overwrites SSR result (always richer).
-
-**Error modes:** Auth wall → escalate to Tier 3.
-
-**Escalation criteria:** `AuthRequiredError` thrown.
-
-### 5.3 Tier 3 — Silent Cookie Inject
+### 5.1 Tier 1 — Cookie+Playwright (PRIMARY)
 
 **Files:**
 - `src/auth/cookie-reader.ts` (NEW) — read + decrypt Chromium SQLite cookies
 - `src/auth/browsers.ts` (NEW) — detect installed browsers + profile paths
+- `src/fetcher/thread.ts` (MOD) — uses cookies via `context.addCookies()` then runs the existing Playwright GraphQL flow
 
-**Trigger:** Tier 2 hit auth wall, AND user has a Chromium browser with X cookies.
+**Trigger:** Default path for `mode: 'auto'`. The orchestrator tries this first on every fetch.
 
 **What it does:**
-1. Detect installed Chromium browsers (Chrome, Brave, Edge) via `browsers.ts`
-2. Find the `Cookies` SQLite DB for each browser's default profile
-3. Read cookies with `host_key LIKE '%x.com'` (privacy-scoped SQL filter)
-4. Decrypt cookie values using macOS Keychain (PBKDF2 + AES-128-CBC)
-5. Inject decrypted cookies into a fresh Playwright `BrowserContext` via `context.addCookies()`
-6. Re-run the fetch with the injected context
+1. Detect installed Chromium-family browsers (Chrome, Brave, Edge) via `browsers.ts`
+2. For each browser (in order Chrome → Brave → Edge), open its `Cookies` SQLite DB (lock-safe — copy WAL-locked DB to temp before reading)
+3. Read cookies with SQL `WHERE host_key LIKE '%x.com'` (privacy-scoped filter)
+4. Decrypt cookie values using macOS Keychain — fetch the `${Browser} Safe Storage` password from Keychain, derive AES key via PBKDF2 (1003 iterations, salt `saltysalt`, 16-byte output), AES-128-CBC decrypt the `v10`-prefixed cookie value with PKCS7 padding
+5. Filter to the cookies XRay actually needs: `auth_token`, `ct0`, `twid` (others stay out of memory)
+6. Inject into a fresh Playwright `BrowserContext` via `context.addCookies(...)`
+7. Run the existing TweetDetail GraphQL fetch flow (Phase 1 code) — pagination, cursor replay, full reply tree
 
-**Capabilities:** Authenticated fetch without any user interaction. Reuses the user's existing browser session.
+**Capabilities:**
+- Full authenticated fetch — replies, quote tweets, nested trees, real-time metrics
+- Pagination via cursor replay (depth N up to maxReplies)
+- All Phase 1 features active: classification, deep mode, synthesis
+- **Zero user interaction after one-time macOS Keychain "Always Allow" prompt**
+- Reuses the user's existing browser session — no fresh login
 
 **Limitations:**
-- macOS only (v0.2.0). Linux/Windows deferred.
-- Only works if user is logged into X in Chrome/Brave/Edge
-- Cookies may be expired → falls through to Tier 4
-- Requires Keychain access prompt (one-time macOS dialog: "XRay wants to access Keychain")
+- macOS only in v0.2.0. Linux (libsecret/kwallet) and Windows (DPAPI) deferred to v0.3.
+- Requires user to be logged into X in Chrome/Brave/Edge (95% of target users)
+- First run triggers one macOS Keychain dialog per browser (one-time per binary)
 
-**Cache strategy:** Same `{root_id}` key. Overwrites.
+**Cache strategy:** Same `{root_id}` key. Overwrites Tier 2/3 results (richest data wins).
+
+**Error modes (each falls through to Tier 2 SSR, never blocks):**
+- No Chromium browsers installed → fall through silently
+- No `x.com` cookies in any browser → fall through silently
+- Keychain access denied → fall through silently (no retry)
+- Decrypt error / corrupted cookie → log debug, fall through silently
+- Cookies present but X returns auth wall (session expired) → fall through silently
+- Playwright launch failure → propagate error (system-level problem)
+
+**Escalation criteria:** Any non-fatal failure above. Fatal errors (Playwright not installed) propagate.
+
+### 5.2 Tier 2 — SSR Scrape (FALLBACK)
+
+**File:** `src/fetcher/ssr.ts` (NEW — already implemented in P1.5.0, commit `a0c9d79`)
+
+**Trigger:** Tier 1 cookie+PW failed/unavailable. Last invisible path before user must act.
+
+**What it fetches:**
+- HTTP GET to `https://x.com/{user}/status/{id}` via `undici` with a Safari User-Agent
+- Parse with `cheerio`
+- Extract from OG meta tags:
+  - Root post: author handle (canonical URL), display name (`og:title`), text (`og:description`), image (`og:image` filtered to `pbs.twimg.com/media`)
+
+**Capabilities:**
+- Sub-second fetch (no browser launch)
+- Works behind corporate proxies that block WebSocket
+- Zero local state, zero Keychain access
+- Works in CI/CD without Playwright installed
+
+**Limitations (empirically verified P1.5.0):**
+- No replies (X SSR strips them for logged-out clients in 2026)
+- No engagement metrics (likes/reposts/views/replies count all absent)
+- No quote tweets
+- No nested data
+- No `createdAt` (no reliable SSR field)
+- Only the OG card survives
+
+In short: SSR answers "what does this tweet say?" — nothing more.
+
+**Cache strategy:** Same `{root_id}` key. Overwritten by Tier 1 result on the next fetch with cookies available.
 
 **Error modes:**
-- No Chromium browsers found → escalate to Tier 4
-- No X cookies in any browser → escalate to Tier 4
-- Keychain access denied → escalate to Tier 4 (silent, no retry)
-- Cookies expired / still auth wall → escalate to Tier 4
+- HTTP 4xx/5xx → escalate to Tier 3 (Auth)
+- No `og:*` tags in HTML (login wall, deleted tweet, age-gated) → escalate to Tier 3
+- HTML structure change → escalate to Tier 3 + log warning for future fixture refresh
 
-**Escalation criteria:** No viable cookies found, or cookie-injected fetch still fails auth.
+**Escalation criteria:** No root post extractable from HTML.
 
-### 5.4 Tier 4 — Interactive Auth (`xray auth`)
+### 5.3 Tier 3 — Interactive Auth (LAST RESORT)
 
 **File:** `src/auth/login.ts` (existing)
 
-**Trigger:** All silent paths exhausted.
+**Trigger:** Both invisible tiers (cookie+PW, SSR) failed. The user must now act.
 
-**What it does:** Opens a non-headless Playwright browser to `x.com/login`, waits for user to sign in, saves `storageState.json`.
+**What it does:**
+- In `auto` mode: checks for existing `~/.xray/storageState.json` (from a previous `xray auth` run). If present, runs Playwright with that storageState. If missing, throws `FetchError` with a clear message — does NOT auto-launch interactive login.
+- When the user explicitly runs `xray auth`: opens a non-headless Playwright browser to `x.com/login`, waits up to 5 minutes for the user to sign in, saves `storageState.json`.
 
-**Capabilities:** Full authenticated access. Works for any account.
+**Capabilities:** Full authenticated access for any X account.
 
-**Limitations:** Requires user interaction. Requires `XRAY_HEADLESS=false`.
+**Limitations:**
+- Requires user to run a separate command (`xray auth`) one time
+- Requires `XRAY_HEADLESS=false` for the interactive login
+- Future improvement: replace fresh-Chromium login with a way to leverage the user's existing browser session (out of scope for v0.2.0 — track in [[feedback_browser_auth_reuse]])
 
-**Cache strategy:** Same `{root_id}` key.
+**Cache strategy:** Same `{root_id}` key. Overwritten only by Tier 1 on subsequent fetches.
 
-**Error modes:** User doesn't log in within 5 minutes → timeout error.
+**Error modes:**
+- `storageState.json` missing in `auto` mode → throw `FetchError`: "This content requires authentication. Run `xray auth` to save login cookies."
+- User doesn't log in within 5 minutes during `xray auth` → timeout error.
 
-**Note:** In `auto` mode, Tier 4 does NOT automatically open a browser. Instead, it checks for an existing `storageState.json` (from a previous `xray auth` run). If missing, it throws `FetchError` with the message "Run `xray auth` to save login cookies." The interactive browser flow only runs when the user explicitly invokes `xray auth`.
+**Note:** This tier never opens a browser in `auto` mode. The interactive browser flow only runs when the user explicitly types `xray auth`. This preserves the invisible-default principle — auto mode never surprises the user with a browser popup.
 
 ---
 
@@ -300,17 +311,17 @@ X's SSR HTML typically includes the root post and 5-20 top-level replies (varies
 
 ### 6.1 coverage.tier on ThreadCoverage
 
-File: `src/models/report.ts`
+File: `src/models/report.ts` (P1.5.0 already landed this with the broader enum — narrow it now).
 
 ```typescript
-// Add to ThreadCoverageSchema:
+// Update ThreadCoverageSchema:
 export const ThreadCoverageSchema = z.object({
   // ... existing fields ...
-  tier: z.enum(['ssr', 'anon', 'cookie', 'auth']).optional(),
+  tier: z.enum(['ssr', 'cookie', 'auth']).optional(),
 });
 ```
 
-`tier` is optional so all existing P0/P1 outputs remain valid without migration. When present, it indicates which escalation tier produced the data.
+`tier` is optional so all existing P0/P1 outputs remain valid without migration. The `'anon'` value from P1.5.0's initial enum is **removed** (no anonymous Playwright tier in the revised architecture). When present, `tier` indicates which escalation tier produced the data.
 
 ### 6.2 coverage on ResearchReport (existing)
 
@@ -330,17 +341,21 @@ coverage: {
 }
 ```
 
-### 6.3 FetchMode enum extension
+### 6.3 FetchMode enum revision
 
 File: `src/fetcher/thread.ts`
 
 ```typescript
-// Existing:
-export type FetchMode = 'auto' | 'anon' | 'auth';
+// Existing (Phase 1):
+// export type FetchMode = 'auto' | 'anon' | 'auth';
 
-// Unchanged. 'auto' now means "4-tier escalation starting at SSR".
-// No new enum values needed — the tier is an internal routing detail.
+// Revised (P1.5):
+export type FetchMode = 'auto' | 'ssr' | 'cookie' | 'auth';
 ```
+
+**Breaking change** vs Phase 1: `'anon'` is removed (no longer a meaningful tier). Added `'ssr'` and `'cookie'` as direct-mode overrides for power users and debugging. `'auto'` (default) now means "3-tier escalation: cookie → SSR → saved auth".
+
+CLI `--mode` flag and MCP `mode` arg surface the same enum. CHANGELOG must call out the `'anon'` removal explicitly.
 
 ### 6.4 FetchResult extension
 
@@ -348,7 +363,7 @@ export type FetchMode = 'auto' | 'anon' | 'auth';
 export type FetchResult = {
   thread: XThread;
   coverage?: WalkCoverage;
-  tier?: 'ssr' | 'anon' | 'cookie' | 'auth';
+  tier?: 'ssr' | 'cookie' | 'auth';
 };
 ```
 
@@ -373,7 +388,7 @@ export type FetchResult = {
 
 | File | Changes |
 |------|---------|
-| `src/fetcher/thread.ts` | Rewrite `fetchThread()` to implement 4-tier escalation orchestrator. SSR first, then anon PW, then cookie inject, then auth fallback. Add `tier` to `FetchResult`. |
+| `src/fetcher/thread.ts` | Rewrite `fetchThread()` to implement 3-tier escalation: Cookie+PW first (Tier 1), SSR fallback (Tier 2), saved auth last resort (Tier 3). Add `tier` to `FetchResult`. Drop anonymous mode entirely. |
 | `src/cli/index.ts` | Wire `xray auth --status` subcommand. |
 | `src/cli/commands/auth.ts` | Add `--status` flag routing to `auth-status.ts`. |
 | `src/models/report.ts` | Add `tier` field to `ThreadCoverageSchema`. |
@@ -396,55 +411,61 @@ async function fetchThread(rawUrl, opts):
   mode = opts.mode ?? cfg.fetcher.mode
 
   // Direct mode overrides — skip escalation
-  if mode == 'anon': return fetchAnon(parsed, opts) with tier='anon'
-  if mode == 'auth': return fetchAuth(parsed, opts) with tier='auth'
+  if mode == 'ssr':    return fetchSSR(parsed) with tier='ssr'
+  if mode == 'cookie': return fetchWithCookies(parsed, opts) with tier='cookie' (no fallback)
+  if mode == 'auth':   return fetchWithStorageState(parsed, opts) with tier='auth'
 
-  // AUTO mode: 4-tier escalation
-  // ---- TIER 1: SSR ----
-  needsEscalation = (opts.depth > 1) OR (opts.maxReplies > SSR_VISIBLE_LIMIT) OR opts.deep
-  if NOT needsEscalation:
-    try:
-      result = await fetchSSR(parsed.canonical, parsed.id)
-      if result.thread.rootPost AND result.thread.comments.length > 0:
-        return { ...result, tier: 'ssr' }
-      // SSR returned root but no comments — still usable for root-only requests
-      if result.thread.rootPost AND opts.maxReplies == 0:
-        return { ...result, tier: 'ssr' }
-      log.debug('SSR insufficient, escalating to Tier 2')
-    catch err:
-      log.debug('SSR failed, escalating to Tier 2', err)
-
-  // ---- TIER 2: ANON PLAYWRIGHT ----
+  // AUTO mode: 3-tier escalation, cookie+PW first
+  // ---- TIER 1: COOKIE+PW (PRIMARY) ----
   try:
-    result = await fetchInMode(parsed, 'anon', opts)
-    return { ...result, tier: 'anon' }
+    browsers = detectChromiumBrowsers()  // Chrome, Brave, Edge in that order
+    for browser in browsers:
+      try:
+        cookies = await readXCookies(browser)  // SQL-filtered to x.com, Keychain decrypt
+        if cookies.length == 0:
+          continue  // try next browser
+        result = await fetchWithCookies(parsed, cookies, opts)
+        return { ...result, tier: 'cookie' }
+      catch err:
+        if err is KeychainDeniedError:
+          log.debug('Keychain denied for ' + browser.name + ', trying next')
+          continue
+        if err is AuthWallError:
+          log.debug('cookies expired for ' + browser.name + ', trying next')
+          continue
+        log.debug('cookie path failed for ' + browser.name, err)
+        continue
+    log.debug('no Chromium browser yielded usable X cookies, falling back to SSR')
   catch err:
-    if NOT (err instanceof AuthRequiredError):
-      throw err  // non-auth error = fatal
-    log.info('anon fetch hit auth wall, trying cookie inject')
+    log.debug('cookie tier failed entirely, falling back to SSR', err)
 
-  // ---- TIER 3: COOKIE INJECT ----
+  // ---- TIER 2: SSR (FALLBACK) ----
   try:
-    cookies = await readXCookies()  // from Chrome/Brave/Edge
-    if cookies.length > 0:
-      result = await fetchWithCookies(parsed, cookies, opts)
-      return { ...result, tier: 'cookie' }
-    log.debug('no X cookies found in any browser')
+    result = await fetchSSR(parsed.canonical)
+    if result.thread.rootPost:
+      // SSR found root; mark partial because no replies/metrics
+      return { ...result, tier: 'ssr' }
+    log.info('SSR returned no root post — likely login wall')
   catch err:
-    log.debug('cookie inject failed', err)
+    log.warn('SSR fetch failed', err)
 
-  // ---- TIER 4: SAVED AUTH (storageState.json) ----
+  // ---- TIER 3: SAVED AUTH (LAST RESORT) ----
   if existsSync(cfg.fetcher.storageStatePath):
-    result = await fetchInMode(parsed, 'auth', opts)
-    return { ...result, tier: 'auth' }
+    try:
+      result = await fetchWithStorageState(parsed, opts)
+      return { ...result, tier: 'auth' }
+    catch err:
+      log.error('saved auth fetch failed', err)
 
-  // All tiers exhausted
+  // All tiers exhausted — surface clear actionable error
   throw FetchError(
-    'This content requires authentication. Run `xray auth` to save login cookies.'
+    'This content requires authentication. ' +
+    'Possible causes: not logged into X in Chrome/Brave/Edge, cookies expired, ' +
+    'or protected/age-gated content. Run `xray auth` to save a login session.'
   )
 ```
 
-### 8.2 fetchWithCookies (new)
+### 8.2 fetchWithCookies (new core path)
 
 ```
 async function fetchWithCookies(parsed, cookies, opts):
@@ -455,18 +476,24 @@ async function fetchWithCookies(parsed, cookies, opts):
     locale: 'en-US',
     timezoneId: 'America/Los_Angeles',
   })
-  await ctx.addCookies(cookies)  // Playwright API
-  // ... same navigateAndCapture flow as fetchInMode('auth')
-  // but using injected cookies instead of storageState
+  await ctx.addCookies(cookies)  // Playwright API — accepts the decrypted Chrome cookies
+  try:
+    // Same navigateAndCapture flow as Phase 1's 'auth' mode,
+    // but using injected cookies instead of storageState.json
+    detail = await navigateAndCapture(ctx, parsed.canonical, parsed.id, opts)
+    if NOT detail.rootPost:
+      throw AuthWallError('cookie-injected fetch returned no root post')
+    return buildThread(detail, opts)
+  finally:
+    await ctx.close()
 ```
 
 ### 8.3 Retry / Timeout Policy
 
-- SSR: single attempt, 10s HTTP timeout
-- Tier 2 (anon): single attempt, existing `cfg.fetcher.timeoutMs` (30s default)
-- Tier 3 (cookie): single attempt per browser (try Chrome first, then Brave, then Edge). First success wins. 30s timeout per attempt.
-- Tier 4 (saved auth): single attempt, 30s timeout
-- Total escalation budget: no global timeout. Each tier is independently timed. In practice, worst-case full escalation takes ~2 minutes (SSR timeout + anon timeout + 3 cookie attempts + auth attempt).
+- Tier 1 cookie+PW: one attempt per browser (Chrome → Brave → Edge), 30s timeout each. First success wins.
+- Tier 2 SSR: single attempt, 10s HTTP timeout.
+- Tier 3 saved auth: single attempt, 30s timeout.
+- No global escalation budget. Worst-case full escalation ≈ 3×30s (cookies) + 10s (SSR) + 30s (auth) = ~130s. In practice, Tier 1 success on Chrome ends the chain in ~10s for cached threads or ~30s cold.
 
 ---
 
@@ -574,7 +601,7 @@ WHERE host_key LIKE '%.x.com' OR host_key = 'x.com'
 
 - `security find-generic-password -s "Chrome Safe Storage" -w` prompts macOS Keychain dialog on first use
 - User clicks "Allow" or "Always Allow" — macOS caches the decision
-- If user clicks "Deny" → command returns non-zero → `readXCookies()` returns empty array → fall through to Tier 4 silently
+- If user clicks "Deny" → command returns non-zero → `readXCookies()` returns empty array → fall through to Tier 2 (SSR) silently
 
 ### 10.2 Linux (deferred to v0.3)
 
@@ -644,7 +671,7 @@ P1.5 does not change this. If a cached thread exists (from any prior tier), it's
 |------|---------------|----------------|
 | `tests/unit/ssr.test.ts` | SSR HTML parsing: root post extraction, comment extraction, metrics parsing, edge cases (empty replies, deleted tweet HTML, login wall HTML). Uses `tests/fixtures/x-ssr-page.html`. | ~15 |
 | `tests/unit/cookie-extract.test.ts` | Cookie reader: SQLite query with host_key filter, decryption (mock Keychain output), cookie format conversion to Playwright format, empty DB, no X cookies, expired cookies. Uses mock SQLite DB. | ~12 |
-| `tests/unit/escalation.test.ts` | Escalation state machine: SSR-sufficient stops at Tier 1, SSR-fail escalates to Tier 2, auth wall escalates to Tier 3, no cookies escalates to Tier 4, all tiers fail throws error. `coverage.tier` set correctly per path. | ~10 |
+| `tests/unit/escalation.test.ts` | Escalation state machine: cookies present → stops at Tier 1; no Chromium → falls to Tier 2 SSR; Tier 1 + Tier 2 fail → Tier 3 if storageState exists; all tiers fail → throws actionable error. `coverage.tier` set correctly per path. | ~10 |
 
 ### 12.3 New Fixtures
 
@@ -728,22 +755,26 @@ XRAY_LOG_LEVEL=debug bun run src/auth/cookie-reader.ts 2>&1 | grep "cookies foun
 
 ### P1.5.2 — Escalation Orchestrator
 
-**Scope:** Rewrite `fetchThread()` auto mode to implement the 4-tier state machine. Wire cookie reader into Tier 3. Add `fetchWithCookies()`. Escalation unit tests.
+**Scope:** Rewrite `fetchThread()` auto mode to implement the 3-tier state machine (Cookie+PW → SSR → saved auth). Wire `fetchWithCookies()` as primary path. Drop the existing anonymous-Playwright code path. Escalation unit tests.
 
 **Files touched:**
-- MOD: `src/fetcher/thread.ts` (major rewrite of `fetchThread` and `fetchInMode`)
+- MOD: `src/fetcher/thread.ts` (major rewrite of `fetchThread`; remove `fetchInMode('anon')` path)
 - MOD: `src/fetcher/browser.ts` (add `newContextWithCookies()` helper)
 - NEW: `tests/unit/escalation.test.ts`
 
 **Acceptance criteria:**
 ```bash
-# Auto mode with a public thread stops at SSR (Tier 1)
+# Auto mode on a public thread with logged-in Chrome cookies returns Tier 1
 xray thread https://x.com/karpathy/status/XXXX --raw --json | jq '.coverage.tier'
+# "cookie"
+
+# Same thread with cookies removed/expired falls back to SSR
+XRAY_FORCE_NO_COOKIES=1 xray thread https://x.com/karpathy/status/XXXX --raw --json | jq '.coverage.tier'
 # "ssr"
 
-# Auto mode with --depth 3 escalates to Tier 2 (Playwright)
-xray thread https://x.com/karpathy/status/XXXX --depth 3 --raw --json | jq '.coverage.tier'
-# "anon"
+# Direct override to SSR
+xray thread https://x.com/karpathy/status/XXXX --mode ssr --raw --json | jq '.coverage.tier'
+# "ssr"
 
 # Escalation tests pass
 bun test tests/unit/escalation.test.ts
@@ -863,16 +894,23 @@ This is a hard break at v0.2.0. Users who relied on the Playwright-powered defau
 ## [0.2.0] - 2026-XX-XX
 
 ### Breaking Changes
-- **Default fetch behavior changed:** `xray thread <url>` now uses SSR HTML scraping
-  (no browser launch) instead of anonymous Playwright. This is significantly faster but
-  returns fewer replies. Use `--depth 3` or `--mode anon` to get the previous behavior
-  with full reply tree pagination.
+- **Default fetch behavior changed:** `xray thread <url>` now silently reads your
+  Chrome/Brave/Edge X cookies (one-time macOS Keychain "Always Allow") and runs an
+  authenticated Playwright fetch — full thread, replies, metrics. If no cookies are
+  found, falls back to SSR HTML scrape (root post only). Phase 1 default was
+  unauthenticated Playwright and failed on auth wall.
+- **`--mode anon` removed.** The anonymous Playwright tier was dropped (X strips
+  reply/metric data from logged-out responses — same content as SSR but slower).
+  Use `--mode ssr` for no-auth fetch, or `--mode cookie` to force cookie path.
+- **MCP `mode` enum** is now `'auto'|'ssr'|'cookie'|'auth'`. Callers passing
+  `mode: 'anon'` will get a Zod parse error.
 
 ### Added
-- 4-tier invisible auth escalation: SSR -> anonymous Playwright -> silent cookie inject -> interactive auth
-- `coverage.tier` field in reports shows which tier produced the data
+- 3-tier invisible auth escalation: Cookie+PW (Chrome/Brave/Edge, silent) → SSR fallback → saved `xray auth` (last resort)
+- `coverage.tier` field (`'ssr'|'cookie'|'auth'`) in reports shows which tier produced the data
 - `xray auth --status` subcommand for diagnosing available auth sources
 - Silent Chromium cookie reading (Chrome, Brave, Edge on macOS) — zero-interaction authentication
+- `--mode ssr` and `--mode cookie` direct-mode overrides for debugging and headless environments
 - SSR fetcher: sub-second thread fetch without Playwright dependency
 - Phase 1 features: deep reply tree pagination, comment classification (stance/quality/score), deep mode analysis
 
@@ -884,12 +922,12 @@ This is a hard break at v0.2.0. Users who relied on the Playwright-powered defau
 
 | Caller pattern | Before (P1) | After (P1.5) |
 |---|---|---|
-| `xray thread <url>` | Playwright anon, full GraphQL | SSR scrape, fewer replies |
-| `xray thread <url> --depth 3` | Playwright anon, paginated | Playwright anon, paginated (same) |
-| `xray thread <url> --deep` | Playwright anon + deep Kyma | SSR → escalate to Playwright → deep Kyma (same final result) |
-| `xray_thread({ url })` MCP | Playwright anon | SSR scrape |
-| `xray_thread({ url, depth: 3 })` MCP | Playwright paginated | Playwright paginated (same) |
-| `xray_thread({ url, mode: 'anon' })` MCP | Playwright anon | Playwright anon (same) |
+| `xray thread <url>` | Playwright anon (no cookies) — fails on auth wall | Cookie+PW silently → SSR fallback → useful output either way |
+| `xray thread <url> --depth 3` | Playwright anon, paginated — fails on auth wall | Cookie+PW paginated (silent) |
+| `xray thread <url> --deep` | Playwright anon + deep Kyma — fails on auth wall | Cookie+PW + deep Kyma (silent) |
+| `xray_thread({ url })` MCP | Playwright anon — fails on auth wall | Cookie+PW silently → SSR fallback |
+| `xray_thread({ url, depth: 3 })` MCP | Playwright paginated — fails on auth wall | Cookie+PW paginated (silent) |
+| `xray_thread({ url, mode: 'anon' })` MCP | Playwright anon (the previous `'anon'` value) | **BREAKING**: `'anon'` removed from enum. Use `mode: 'ssr'` for no-auth or `mode: 'cookie'` to force cookie path. |
 
 ---
 
