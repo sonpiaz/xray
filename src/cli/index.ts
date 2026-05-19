@@ -6,7 +6,7 @@ import { cacheClearCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { threadCommand } from './commands/thread.ts';
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');

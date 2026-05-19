@@ -4,6 +4,17 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-05-19
+
+### Added
+- **Self-thread reconstruction.** Parser now detects same-author continuation tweets (Karpathy-style 2/N, 3/N) inside X's `VerticalConversation` GraphQL modules and routes them into `XThread.authorPosts` instead of dropping them as flat comments.
+- **Author-engagement flag.** New `isAuthorReply: boolean` on `XComment` marks comments where the OP is replying to another commenter. Surfaced as a dedicated "Author engagement" Markdown section.
+- **Unified author-thread render.** When the thread has follow-ups, Markdown output now shows a single numbered `[1/N]`, `[2/N]` narrative block under `## Source — Author Thread` instead of the previous root-only quote + separate follow-ups list.
+- **LLM prompt sharpening.** System prompt explicitly states "root + authorPosts form a single thesis" and "author replies are HIGH-SIGNAL"; user prompt now tags author-engagement replies with `[AUTHOR REPLY]` so the model weighs them appropriately.
+
+### Fixed
+- Karpathy-style threads previously reported `authorPosts.length === 0` even when X returned the continuation tweets — readers concluded the OP posted only one tweet.
+
 ## [0.2.0] — 2026-05-19
 
 ### Breaking Changes
