@@ -5,6 +5,7 @@ import { articleCommand } from './commands/article.ts';
 import { authCommand } from './commands/auth.ts';
 import { cacheClearCommand, cacheEmbedCommand, cacheInfoCommand } from './commands/cache.ts';
 import { mcpCommand } from './commands/mcp.ts';
+import { searchCommand } from './commands/search.ts';
 import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
 
@@ -63,6 +64,19 @@ export async function runCli(argv: string[]): Promise<number> {
     .option('--model <name>', 'Override Kyma summarization model')
     .action(async (url: string, opts: Parameters<typeof articleCommand>[1]) => {
       await articleCommand(url, opts);
+    });
+
+  cli
+    .command('search <query>', 'Semantic search across cached XRay content (uses local embeddings)')
+    .option('--json', 'Output JSON instead of Markdown')
+    .option('-o, --output <path>', 'Write output to a file')
+    .option('--limit <n>', 'Max results (default 10)', { default: 10 })
+    .option('--threshold <n>', 'Minimum cosine similarity 0-1 (default: no filter)')
+    .option('--type <t>', 'Filter by entity type: comment | post | thread | article-passage')
+    .option('--rerank', 'LLM rerank top candidates (~$0.005 extra)')
+    .option('--model <name>', 'Override Kyma rerank model')
+    .action(async (query: string, opts: Parameters<typeof searchCommand>[1]) => {
+      await searchCommand(query, opts);
     });
 
   cli
