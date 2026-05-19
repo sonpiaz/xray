@@ -100,3 +100,40 @@ export function assertFfmpeg(check: DependencyCheck): void {
     );
   }
 }
+
+/**
+ * P2.1 — Multi-line install hint for missing yt-dlp. Kept as a constant so
+ * test assertions can match exact substrings.
+ */
+export const YT_DLP_INSTALL_HINT = [
+  'yt-dlp is required for external video platforms (YouTube, TikTok, Vimeo, LinkedIn).',
+  'Install:',
+  '  macOS:    brew install yt-dlp',
+  '  pipx:     pipx install yt-dlp',
+  '  download: https://github.com/yt-dlp/yt-dlp#installation',
+].join('\n');
+
+/**
+ * Throw a `DependencyError` with the canonical install hint if yt-dlp is
+ * not present. Used by the platform router before invoking the yt-dlp
+ * subprocess so we fail fast with an actionable message.
+ */
+export function assertYtDlp(check: DependencyCheck): void {
+  if (!check.ytdlp || !check.ytdlp.available) {
+    throw new DependencyError(YT_DLP_INSTALL_HINT);
+  }
+}
+
+/**
+ * Convenience wrapper around `checkDependencies({ needYtDlp: true })`
+ * that returns just the yt-dlp state. Used by callers that only care
+ * about yt-dlp presence (e.g. `xray video <url>` for an external URL).
+ *
+ * Returns `{ available: false }` when yt-dlp is not on PATH or its
+ * `--version` invocation fails (ENOENT or non-zero exit).
+ */
+export async function checkYtDlp(): Promise<DependencyState> {
+  const ytdlpPath = await whichBinary('yt-dlp');
+  if (!ytdlpPath) return { available: false };
+  return { available: true, path: ytdlpPath, ...(await maybeVersion(ytdlpPath)) };
+}
