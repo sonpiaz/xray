@@ -30,25 +30,27 @@ xray thread https://x.com/karpathy/status/1234567890
 
 ## Status
 
-**v0.2.0 — Phase 1 + 1.5 (Deep threads + invisible auth escalation).** First "just works" release. See [CHANGELOG.md](./CHANGELOG.md) for full history.
+**v0.3.0 — Phase 2 (Video understanding).** Full transcript + frame analysis + structured synthesis for X-native, YouTube, TikTok, Vimeo, and LinkedIn videos. See [CHANGELOG.md](./CHANGELOG.md) for full history.
 
 | Phase | What it adds | Status |
 |---|---|---|
 | 0 | Thread fetch + comments + Kyma summary + MCP | Done (v0.0.1) |
 | 1 | Deep reply trees + classification + `--deep` synthesis | Done (v0.2.0) |
 | 1.5 | Invisible 3-tier auth (cookie → SSR → saved auth) + `--mode` overrides + `xray auth --status` | Done (v0.2.0) |
-| 2 | Video understanding (frames + transcript) | Planned |
+| 2 | Video understanding (transcript + scene-detect frames + synthesis) | Done (v0.3.0) |
 | 3 | External article cross-reference | Planned |
 | 4 | Semantic search + narrative tracking | Planned |
 | 5 | Polish + OSS readiness | Planned |
 
-**v0.2.0 highlights:**
+**v0.3.0 highlights:**
 
-- Default `xray thread <url>` requires zero flags, zero setup, zero login for public threads.
-- Reads your Chrome/Brave/Edge X cookies silently — one-time macOS Keychain "Always Allow" — to fetch the full reply tree.
-- Falls back to SSR HTML scrape (root post only) when no cookies are available.
-- New `xray auth --status` diagnostic to inspect what the orchestrator would do, without prompting Keychain.
-- See [CHANGELOG.md](./CHANGELOG.md) for the full v0.2.0 entry and breaking changes (`--mode anon` removed).
+- `xray video <url>` — standalone command for any video (X-native, YouTube, TikTok, Vimeo, LinkedIn).
+- `xray thread <url> --video` — embed video analysis directly in the thread report when the root post (or author follow-ups) contains video.
+- `xray_video` MCP tool + `video` arg on `xray_thread` for agent callers.
+- Per-video cost surfaced via `estimatedCostUsd` + `costBreakdown`; debug-level per-stage cost logs; WARN on videos over 10 minutes.
+- LRU video cache (1 GB) at `~/.xray/cache/video/` keyed by canonical URL — second runs hit cache for transcript + vision.
+- Requires `ffmpeg` for audio + frame extraction; `yt-dlp` only needed for external platforms (X-native works without it).
+- See [CHANGELOG.md](./CHANGELOG.md) for the full v0.3.0 entry.
 
 ---
 
@@ -101,7 +103,15 @@ bun run xray thread https://x.com/karpathy/status/1234567890 --mode cookie
 # start MCP server (for Grok CLI / Claude Code)
 bun run xray mcp
 
-# cache controls
+# analyze a video (X-native, YouTube, TikTok, Vimeo, LinkedIn)
+bun run xray video https://x.com/user/status/123
+bun run xray video https://youtu.be/<id> --json
+bun run xray video https://x.com/user/status/123 --raw   # transcript + frames, skip synthesis
+
+# embed video analysis inside a thread report
+bun run xray thread https://x.com/karpathy/status/1234567890 --video
+
+# cache controls (now includes video cache stats)
 bun run xray cache info
 bun run xray cache clear
 ```
@@ -136,7 +146,10 @@ Add to your MCP config:
 }
 ```
 
-The agent gets one tool: `xray_thread({ url })` → `ResearchReport`.
+The agent gets two tools:
+
+- `xray_thread({ url, video?, ... })` → `ResearchReport` (with optional embedded `videoAnalysis[]` when `video: true`).
+- `xray_video({ url, raw?, format? })` → `VideoReport` (standalone video analysis).
 
 ---
 

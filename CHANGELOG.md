@@ -4,6 +4,28 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-05-19
+
+### Added
+
+- **Video understanding pipeline (Phase 2).** Analyze X-native videos + YouTube + TikTok + Vimeo + LinkedIn with full transcript (Whisper-large-v3-turbo), hybrid scene-detect frame extraction, batched Kyma vision, and structured synthesis. Every report ships with `transcript`, `frames.analyses[]`, `keyMoments[]`, `visualContext[]`, `summary`, and `topic`.
+- **`xray video <url>` standalone command** for direct video analysis. Flags: `--json`, `-o <path>`, `--no-cache`, `--raw`, `--model <name>`, `--frames <n>`.
+- **`xray_video` MCP tool** for agent callers. Returns a `VideoReport` as both `structuredContent` and Markdown.
+- **`--video` flag on `xray thread`** to embed video analysis when the root post or author follow-ups contain `type === 'video'` media. Capped at 3 videos per thread to avoid runaway cost. Failures degrade into `warnings[]`; the rest of the report still ships.
+- **`ResearchReport.videoAnalysis: VideoReport[]`** optional field — populated when `--video` runs and at least one video is detected.
+- **Markdown video section** embedded into `xray thread` output (and full standalone document for `xray video`). Renders `Source`, `Duration`, `Estimated cost`, `Summary`, `Key Moments`, `Visual Context`, and a truncated `Transcript` excerpt.
+- **LRU video cache** at `~/.xray/cache/video/` with 1 GB cap; transcript + vision results cached by canonical URL.
+- **Per-video cost surfacing** via `estimatedCostUsd` + `costBreakdown` fields on every `VideoReport`. Debug-level per-stage cost logs (`stage: transcribe|vision|synthesis|total`). WARN-level log when a downloaded video exceeds 10 minutes.
+
+### Changed
+
+- `package.json`, CLI, and MCP server version bumped to `0.3.0`.
+
+### Dependencies (optional)
+
+- `yt-dlp` required for external platforms (YouTube, TikTok, Vimeo, LinkedIn). X-native videos work without it. Install: `brew install yt-dlp` or `pipx install yt-dlp`.
+- `ffmpeg` required for all video features (audio extract + frame extraction).
+
 ## [0.2.2] — 2026-05-19
 
 ### Added
