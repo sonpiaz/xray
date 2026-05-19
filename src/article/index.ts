@@ -30,6 +30,17 @@ export {
   summarizeArticle,
 } from './summarize.ts';
 export {
+  buildCrossReferencePrompts,
+  CROSS_REFERENCE_PROMPT_VERSION,
+  type CrossReferenceInput,
+  type CrossReferenceOutput,
+  crossReferenceArticle,
+  estimateCrossReferenceCost,
+  MAX_CROSS_REFERENCES,
+  parseCrossReferenceResponse,
+  repairCrossReferenceResponse,
+} from './cross-reference.ts';
+export {
   _setDbModuleForTests,
   _setHeadResolverForTests,
   type ArticleCacheInfo,

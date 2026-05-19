@@ -1,0 +1,22 @@
+{
+  "crossReferences": [
+    {
+      "tweetClaim": "Scaling alone solves intelligence — just keep adding parameters.",
+      "articlePassage": "Diminishing returns past 70B parameters suggest that scaling alone is not sufficient.",
+      "relationship": "contradicts",
+      "confidence": 0.92
+    },
+    {
+      "tweetClaim": "Self-attention is the key innovation behind modern LLMs.",
+      "articlePassage": "The self-attention mechanism enables the model to weigh tokens across long contexts without recurrence.",
+      "relationship": "supports",
+      "confidence": 0.95
+    },
+    {
+      "tweetClaim": "Fine-tuning on small task-specific datasets is overrated.",
+      "articlePassage": "Training data quality matters more than raw model size — domain-specific fine-tuning yields disproportionate gains.",
+      "relationship": "contradicts",
+      "confidence": 0.88
+    }
+  ]
+}
