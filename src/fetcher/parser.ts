@@ -185,6 +185,14 @@ export type NestedShowMoreCursor = {
   parentPostId?: string;
   /** Module-level depth hint: 1 for first-level nested replies, 2 for replies-to-replies, etc. */
   depth: number;
+  /**
+   * P1.6 PR2: true when the cursor's anchor parent is the root author replying
+   * to a commenter (i.e. the parent comment would have `isAuthorReply=true`).
+   * Phase B uses this flag to prioritise expansion under author-engagement
+   * replies, where follow-up signal density is highest. Optional/omitted on
+   * cursors whose parent we can't identify or that aren't author-anchored.
+   */
+  parentIsAuthorReply?: boolean;
 };
 
 export type ExtractedCursors = {
@@ -273,8 +281,17 @@ export function parseTweetDetail(payload: unknown, rootId: string): ParsedDetail
  *
  * X has used several cursorType values over time; we accept any cursorType that
  * starts with "ShowMore" as a nested expansion cursor.
+ *
+ * P1.6 PR2: optional `ctx` lets the caller pass `rootId` + `rootAuthorId` so
+ * we can flag cursors whose anchor parent is the root author replying to a
+ * commenter (same heuristic as `XComment.isAuthorReply`). Phase B uses this
+ * to prioritise author-engagement subtrees. Backward-compatible: callers that
+ * don't pass `ctx` get the same cursor shape as before, just without the flag.
  */
-export function extractCursors(payload: unknown): ExtractedCursors {
+export function extractCursors(
+  payload: unknown,
+  ctx?: { rootId: string; rootAuthorId?: string },
+): ExtractedCursors {
   const out: ExtractedCursors = { showMore: [] };
   const instructions = findInstructions(payload);
   if (!instructions) return out;
@@ -307,6 +324,7 @@ export function extractCursors(payload: unknown): ExtractedCursors {
       const items = arr(content.items);
       if (!items) continue;
       let lastTweetId: string | undefined;
+      let lastTweetIsAuthorReply = false;
       let depthHint = 1;
       for (const it of items) {
         const io = obj(it);
@@ -320,6 +338,22 @@ export function extractCursors(payload: unknown): ExtractedCursors {
           if (id) {
             lastTweetId = id;
             depthHint += 1; // each tweet under a parent deepens the module
+            // P1.6 PR2: mirror the addTweet() isAuthorReply heuristic so the
+            // cursor can carry the parent-engagement flag. Same author as
+            // root + replies to another comment (not root) ⇒ author reply.
+            lastTweetIsAuthorReply = false;
+            if (ctx?.rootAuthorId) {
+              const author = parseAuthor(tweet?.core);
+              const legacy = obj(tweet?.legacy);
+              const inReplyTo = str(legacy?.in_reply_to_status_id_str);
+              if (
+                author?.id === ctx.rootAuthorId &&
+                inReplyTo !== undefined &&
+                inReplyTo !== ctx.rootId
+              ) {
+                lastTweetIsAuthorReply = true;
+              }
+            }
           }
         } else if (itc.itemType === 'TimelineTimelineCursor') {
           const cType = str(itc.cursorType) ?? str(itc.type);
@@ -327,6 +361,7 @@ export function extractCursors(payload: unknown): ExtractedCursors {
           if (cType && cVal && cType.startsWith('ShowMore')) {
             const cursor: NestedShowMoreCursor = { value: cVal, depth: depthHint };
             if (lastTweetId !== undefined) cursor.parentPostId = lastTweetId;
+            if (lastTweetIsAuthorReply) cursor.parentIsAuthorReply = true;
             out.showMore.push(cursor);
           }
         }

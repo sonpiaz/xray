@@ -49,6 +49,26 @@ const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_DELAY_MS = 500;
 const DEFAULT_MAX_REQUESTS = 30;
 const EMPTY_PAGE_STREAK_LIMIT = 3;
+/**
+ * P1.6 PR2: hard ceiling on the adaptive Phase-B budget bump. Keeps us from
+ * burning unbounded requests on a single very busy thread even when the
+ * "author-engagement" heuristic fires. `* 3` leaves headroom over the `* 2`
+ * bump while still being explicitly bounded.
+ */
+const MAX_REQUESTS_CEILING = DEFAULT_MAX_REQUESTS * 3;
+/**
+ * P1.6 PR2: stop expanding ShowMore cursors once we've collected N author
+ * replies. 5 is "enough OP-engagement context" — beyond that, additional
+ * sub-cursor fetches are marginal vs. budget cost.
+ */
+const EARLY_STOP_AUTHOR_REPLIES = 5;
+/**
+ * P1.6 PR2: trigger the adaptive `maxRequests` bump when the thread looks
+ * author-engaged. Either a multi-post self-thread (PR1's `authorPosts >= 2`)
+ * or a very busy thread (high reply volume is a proxy for OP-engagement).
+ */
+const ADAPTIVE_AUTHOR_POSTS_THRESHOLD = 2;
+const ADAPTIVE_BUSY_COMMENTS_THRESHOLD = 200;
 
 /**
  * Walk the reply tree by replaying TweetDetail GraphQL calls inside the
@@ -88,11 +108,14 @@ export async function walkReplyTree(
   const startedAt = Date.now();
   const deadline = startedAt + (options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS);
   const delayMs = options.paginationDelayMs ?? DEFAULT_DELAY_MS;
-  const maxRequests = options.maxRequests ?? DEFAULT_MAX_REQUESTS;
+  const baseMaxRequests = options.maxRequests ?? DEFAULT_MAX_REQUESTS;
+  let maxRequests = baseMaxRequests;
   let requestsMade = 0;
 
   let bottom = initialCursors.bottom;
-  const showMore: NestedShowMoreCursor[] = [...initialCursors.showMore];
+  // P1.6 PR2: enqueue author-anchored ShowMore cursors first so Phase B
+  // pops them before third-party subtrees. Stable across the rest.
+  const showMore: NestedShowMoreCursor[] = sortAuthorFirst(initialCursors.showMore);
   let emptyStreak = 0;
 
   // -- Phase A: paginate top-level replies via Bottom cursor.
@@ -119,16 +142,44 @@ export async function walkReplyTree(
     } else {
       emptyStreak = 0;
     }
-    // Update cursors from the latest response.
+    // Update cursors from the latest response. Author-anchored cursors jump
+    // the queue (unshift) so Phase B drains them first; everything else FIFO.
     bottom = next.bottom;
-    for (const sm of next.showMore) showMore.push(sm);
+    for (const sm of next.showMore) {
+      if (sm.parentIsAuthorReply) showMore.unshift(sm);
+      else showMore.push(sm);
+    }
     if (!bottom) break;
   }
 
   // -- Phase B: walk ShowMore (nested) cursors up to `depth`.
+  // P1.6 PR2: bump the request budget when the thread looks author-engaged
+  // (Karpathy-style self-thread or very busy thread). Keeps Phase A's
+  // top-level pagination from starving Phase B's nested expansion on the
+  // exact threads where nested context matters most.
+  if (shouldBumpBudget(aggregate)) {
+    const bumped = Math.min(baseMaxRequests * 2, MAX_REQUESTS_CEILING);
+    if (bumped > maxRequests) {
+      logger.debug('budget bumped for author-engagement thread', {
+        original: baseMaxRequests,
+        effective: bumped,
+        authorPosts: aggregate.authorPosts.length,
+        comments: aggregate.comments.length,
+      });
+      maxRequests = bumped;
+    }
+  }
+
   let achievedDepth = computeAchievedDepth(aggregate.comments);
   emptyStreak = 0;
   while (showMore.length > 0 && Date.now() < deadline && requestsMade < maxRequests) {
+    // P1.6 PR2: early-stop once we have enough OP-engagement context. Cheap
+    // recursive count over the aggregate; bounded by total comment volume.
+    const authorReplyCount = countAuthorReplies(aggregate.comments);
+    if (authorReplyCount >= EARLY_STOP_AUTHOR_REPLIES) {
+      logger.debug('early-stop: enough author replies', { count: authorReplyCount });
+      break;
+    }
     const cursor = showMore.shift();
     if (!cursor) break;
     if (cursor.depth > options.depth) continue;
@@ -152,7 +203,10 @@ export async function walkReplyTree(
     }
     for (const sm of next.showMore) {
       // Only enqueue cursors whose target depth is still within budget.
-      if (sm.depth <= options.depth) showMore.push(sm);
+      // Author-anchored cursors jump the queue (Change A), else FIFO.
+      if (sm.depth > options.depth) continue;
+      if (sm.parentIsAuthorReply) showMore.unshift(sm);
+      else showMore.push(sm);
     }
   }
 
@@ -199,7 +253,12 @@ async function fetchAndMerge(
     );
     const parsed = parseTweetDetail(payload, rootId);
     mergeParsed(aggregate, parsed, seenIds, nestedParent);
-    return extractCursors(payload);
+    // P1.6 PR2: thread rootAuthorId so newly-extracted cursors can carry
+    // `parentIsAuthorReply` for the prioritised Phase-B queue.
+    return extractCursors(payload, {
+      rootId,
+      rootAuthorId: aggregate.rootPost?.author.id,
+    });
   } catch (err) {
     logger.debug('pagination fetch failed', { cursor: cursor.slice(0, 24), err: String(err) });
     return undefined;
@@ -350,6 +409,64 @@ function countAllComments(comments: XComment[]): number {
     if (c.replies.length > 0) n += countAllComments(c.replies);
   }
   return n;
+}
+
+/**
+ * P1.6 PR2 internals exposed for unit tests. Not part of the public surface —
+ * the runtime code uses these via direct (non-exported) references above. We
+ * re-export them so the test suite can exercise the helpers without standing
+ * up a full Playwright Phase-B mock.
+ */
+export const _internals = {
+  EARLY_STOP_AUTHOR_REPLIES,
+  ADAPTIVE_AUTHOR_POSTS_THRESHOLD,
+  ADAPTIVE_BUSY_COMMENTS_THRESHOLD,
+  MAX_REQUESTS_CEILING,
+  DEFAULT_MAX_REQUESTS,
+  countAuthorReplies: (comments: XComment[]) => countAuthorReplies(comments),
+  sortAuthorFirst: (cursors: NestedShowMoreCursor[]) => sortAuthorFirst(cursors),
+  shouldBumpBudget: (aggregate: ParsedDetail) => shouldBumpBudget(aggregate),
+};
+
+/**
+ * P1.6 PR2: recursive count of comments flagged as author-reply (root author
+ * replying to a commenter). Used by Phase B's early-stop check — past
+ * EARLY_STOP_AUTHOR_REPLIES, additional sub-cursor fetches are marginal.
+ */
+function countAuthorReplies(comments: XComment[]): number {
+  let n = 0;
+  for (const c of comments) {
+    if (c.isAuthorReply === true) n += 1;
+    if (c.replies.length > 0) n += countAuthorReplies(c.replies);
+  }
+  return n;
+}
+
+/**
+ * P1.6 PR2: stable sort placing author-anchored cursors first. Preserves
+ * the relative order of same-bucket cursors so we keep predictable
+ * "as discovered" ordering within each priority class.
+ */
+function sortAuthorFirst(cursors: NestedShowMoreCursor[]): NestedShowMoreCursor[] {
+  const author: NestedShowMoreCursor[] = [];
+  const other: NestedShowMoreCursor[] = [];
+  for (const c of cursors) {
+    if (c.parentIsAuthorReply) author.push(c);
+    else other.push(c);
+  }
+  return [...author, ...other];
+}
+
+/**
+ * P1.6 PR2: detect "high-engagement author" threads. Either the author
+ * shipped multi-post self-thread (Karpathy-style, surfaced by PR1) or the
+ * thread is busy enough that author engagement is likely. Both conditions
+ * are cheap to compute after the initial parse.
+ */
+function shouldBumpBudget(aggregate: ParsedDetail): boolean {
+  if (aggregate.authorPosts.length >= ADAPTIVE_AUTHOR_POSTS_THRESHOLD) return true;
+  if (aggregate.comments.length > ADAPTIVE_BUSY_COMMENTS_THRESHOLD) return true;
+  return false;
 }
 
 function determineStatus(c: WalkCoverage): CoverageStatus {
