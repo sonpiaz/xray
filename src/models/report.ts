@@ -53,6 +53,61 @@ export const StanceDistributionSchema = z.object({
 });
 export type StanceDistribution = z.infer<typeof StanceDistributionSchema>;
 
+/**
+ * P1.3 — Deep mode per-subtree summary. One entry per top-level reply for which
+ * a `DEEP_SUBTREE_PROMPT` Kyma call succeeded.
+ *
+ * The shape intentionally mirrors what an agent needs to decide which subtree to
+ * "jump into" — a one-line headline + a handful of bullets + an explicit dissent
+ * channel so disagreement isn't buried under the bullets.
+ */
+export const SubtreeSummarySchema = z.object({
+  rootReplyPostId: z.string(),
+  rootReplyHandle: z.string(),
+  replyCount: z.number().int().nonnegative(),
+  headline: z.string(),
+  keyPoints: z.array(z.string()).default([]),
+  dissent: z.array(z.string()).default([]),
+});
+export type SubtreeSummary = z.infer<typeof SubtreeSummarySchema>;
+
+/**
+ * P1.3 — Cross-subtree synthesis output. Produced by the final synthesis Kyma
+ * call in deep mode. Maps the structure of the debate across subtrees.
+ *
+ * `evidenceSubtreeIds` reference `subtreeSummaries[].rootReplyPostId` so a
+ * downstream agent can follow each top-level argument back to the subtree
+ * that voiced it.
+ */
+export const TopArgumentSchema = z.object({
+  argument: z.string(),
+  voicedBy: z.array(z.string()).default([]),
+  evidenceSubtreeIds: z.array(z.string()).default([]),
+});
+export type TopArgument = z.infer<typeof TopArgumentSchema>;
+
+export const DissentEntrySchema = z.object({
+  claim: z.string(),
+  againstOp: z.boolean().default(false),
+  voicedBy: z.array(z.string()).default([]),
+  evidenceSubtreeIds: z.array(z.string()).default([]),
+});
+export type DissentEntry = z.infer<typeof DissentEntrySchema>;
+
+export const SubThreadPointerSchema = z.object({
+  rootReplyPostId: z.string(),
+  handle: z.string(),
+  reason: z.string(),
+});
+export type SubThreadPointer = z.infer<typeof SubThreadPointerSchema>;
+
+export const DeepSynthesisSchema = z.object({
+  topArguments: z.array(TopArgumentSchema).default([]),
+  dissentMap: z.array(DissentEntrySchema).default([]),
+  subThreadsWorthReading: z.array(SubThreadPointerSchema).default([]),
+});
+export type DeepSynthesis = z.infer<typeof DeepSynthesisSchema>;
+
 export const ResearchReportSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]).default(1),
   generatedAt: z.string().datetime(),
@@ -71,5 +126,9 @@ export const ResearchReportSchema = z.object({
   warnings: z.array(z.string()).default([]),
   coverage: ThreadCoverageSchema.optional(),
   stanceDistribution: StanceDistributionSchema.optional(),
+  // P1.3 — present only when `--deep` / `deep: true` ran. Absent on shallow runs
+  // so existing P0/P1.1/P1.2 outputs remain byte-identical.
+  subtreeSummaries: z.array(SubtreeSummarySchema).optional(),
+  deepSynthesis: DeepSynthesisSchema.optional(),
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;

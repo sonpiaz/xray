@@ -4,9 +4,11 @@ import { logger } from '../core/logger.ts';
 import { type FetchMode, type FetchOptions, fetchThread } from '../fetcher/thread.ts';
 import { parseXUrl } from '../fetcher/url.ts';
 import { analyzeThread } from '../kyma/analyze.ts';
+import type { ShallowAnalysisDigest } from '../kyma/prompts.ts';
 import type { ResearchReport, StanceDistribution, ThreadCoverage } from '../models/report.ts';
 import type { XThread } from '../models/thread.ts';
 import { classifyComments, computeStanceDistribution } from './classify.ts';
+import { deepAnalyze } from './deep.ts';
 
 export type ResearchOptions = {
   mode?: FetchMode;
@@ -15,6 +17,9 @@ export type ResearchOptions = {
   // P1.0 additions
   depth?: number;
   maxReplies?: number;
+  // P1.3 — when true, runs per-subtree Kyma calls + a synthesis call ON TOP OF
+  // the shallow analyze pass. Default false preserves Phase 0/P1.1/P1.2 behavior.
+  deep?: boolean;
 };
 
 export async function research(url: string, opts: ResearchOptions = {}): Promise<ResearchReport> {
@@ -112,6 +117,38 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
 
   const analysis = await analyzeThread(thread);
 
+  // P1.3: deep mode runs AFTER the shallow analyze so the synthesis call can
+  // reference the shallow tldr/summary/insights. Default-off — only fires when
+  // `opts.deep === true`. Failures degrade gracefully into warnings; the report
+  // still contains the shallow analyze output.
+  let subtreeSummaries: import('../models/report.ts').SubtreeSummary[] | undefined;
+  let deepSynthesis: import('../models/report.ts').DeepSynthesis | undefined;
+  if (opts.deep && thread.comments.length > 0) {
+    const shallowDigest: ShallowAnalysisDigest = {
+      tldr: analysis.tldr,
+      summary: analysis.summary,
+      keyInsights: analysis.keyInsights.map((k) => ({
+        insight: k.insight,
+        confidence: k.confidence,
+      })),
+      openQuestions: analysis.openQuestions,
+      ...(analysis.topic ? { topic: analysis.topic } : {}),
+    };
+    const deepOutcome = await deepAnalyze(thread, shallowDigest);
+    if (deepOutcome.subtreeSummaries.length > 0) {
+      subtreeSummaries = deepOutcome.subtreeSummaries;
+    }
+    if (deepOutcome.deepSynthesis) {
+      deepSynthesis = deepOutcome.deepSynthesis;
+    }
+    for (const w of deepOutcome.warnings) partialWarnings.push(w);
+    logger.debug('deep mode done', {
+      subtreeCalls: deepOutcome.subtreeCallCount,
+      synthesisCalls: deepOutcome.synthesisCallCount,
+      summaries: deepOutcome.subtreeSummaries.length,
+    });
+  }
+
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -126,5 +163,7 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     warnings: partialWarnings,
     ...(coverage ? { coverage } : {}),
     ...(stanceDistribution ? { stanceDistribution } : {}),
+    ...(subtreeSummaries ? { subtreeSummaries } : {}),
+    ...(deepSynthesis ? { deepSynthesis } : {}),
   };
 }

@@ -20,6 +20,7 @@ export async function runCli(argv: string[]): Promise<number> {
     .option('--mode <mode>', 'Fetch mode: auto | anon | auth', { default: 'auto' })
     .option('--depth <n>', 'Max reply nesting depth to walk (default 3)')
     .option('--max-replies <n>', 'Max top-level replies to fetch (default 50)')
+    .option('--deep', 'Run deep analysis: per-subtree Kyma calls + synthesis (~10x cost)')
     .action(async (url: string, opts: Parameters<typeof threadCommand>[1]) => {
       await threadCommand(url, opts);
     });

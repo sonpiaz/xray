@@ -1,0 +1,12 @@
+{
+  "headline": "Whether GPT-style scaling has actually decelerated, with one expert citing compute-utilization data.",
+  "keyPoints": [
+    "Subtree root argues the slowdown is real and visible in published benchmarks.",
+    "A nested reply counters that current benchmarks no longer track the frontier.",
+    "Two replies request a citation for the original claim."
+  ],
+  "dissent": [
+    "Pushback that the OP conflates 'pretraining scaling' with 'capability scaling'.",
+    "One reply notes inference-time techniques have masked the deceleration."
+  ]
+}

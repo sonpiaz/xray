@@ -32,6 +32,10 @@ const ThreadInput = {
     .max(200)
     .optional()
     .describe('Max top-level replies to fetch. Default: 50.'),
+  deep: z
+    .boolean()
+    .optional()
+    .describe('Run deep analysis: per-subtree Kyma calls + synthesis. ~10x cost.'),
   format: z
     .enum(['markdown', 'json', 'both'])
     .optional()
@@ -57,6 +61,7 @@ export async function startMcpServer(): Promise<void> {
         if (args.raw) opts.skipAnalysis = true;
         if (args.depth !== undefined) opts.depth = args.depth;
         if (args.maxReplies !== undefined) opts.maxReplies = args.maxReplies;
+        if (args.deep) opts.deep = true;
 
         const report = await research(args.url, opts);
         const format = args.format ?? 'markdown';

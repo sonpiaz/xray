@@ -133,3 +133,163 @@ export function renderClassificationPrompt(rootPost: XPost, batch: XComment[]): 
   }
   return lines.join('\n');
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1.3 — Deep mode prompts (per-subtree analysis + cross-subtree synthesis)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DEEP_SUBTREE_SYSTEM_PROMPT = `You analyze a single conversation subtree from an X (Twitter) thread.
+A subtree is one top-level reply + its nested descendants.
+
+For the subtree, produce:
+- A 1-sentence "headline" describing the through-line of the conversation
+- "keyPoints": 2-4 short bullets capturing the substantive claims/sub-arguments raised
+- "dissent": 0-3 bullets capturing pushback against the subtree-root reply OR against the original ROOT POST.
+  If there is no meaningful dissent, return an empty array.
+
+Hard rules:
+- Never invent facts. Stick to what the messages actually say.
+- The subtree root's stance is relative to the ROOT POST, not to other subtrees.
+- Output VALID JSON ONLY — no markdown fences, no preamble.`;
+
+export const DEEP_SYNTHESIS_SYSTEM_PROMPT = `You synthesize multiple conversation subtrees from a single X (Twitter) thread.
+You will receive: the ROOT POST, the shallow thread-level analysis (tldr/summary/insights), and a list of per-subtree summaries.
+
+Your job is to produce ONE unified deep report that explicitly maps the structure of the debate:
+- "topArguments": the major argument clusters across subtrees, each labeled with the subtree handles that voiced it
+- "dissentMap": the major lines of disagreement (with OP or among repliers)
+- "subThreadsWorthReading": which subtree handles a reader should jump into first, and why
+
+Hard rules:
+- Never invent facts. Cite only ideas present in the subtree summaries or root post.
+- Distinguish the OP's claims from replies' claims.
+- Output VALID JSON ONLY — no markdown fences, no preamble.`;
+
+/**
+ * Per-subtree user prompt: one Kyma call per subtree, produces a SubtreeSummary
+ * (headline + keyPoints + dissent).
+ *
+ * `subtreeRoot` is the top-level reply that defines this subtree; `nestedReplies`
+ * are its descendants (already flattened in DFS order with depth tags).
+ */
+export function renderDeepSubtreePrompt(
+  rootPost: XPost,
+  subtreeRoot: XComment,
+  nestedReplies: XComment[],
+): string {
+  const lines: string[] = [];
+  lines.push(`ROOT POST by @${rootPost.author.handle}:`);
+  lines.push(`"${truncateText(rootPost.text, 600)}"`);
+  lines.push('');
+  lines.push(
+    `SUBTREE ROOT by @${subtreeRoot.author.handle}${subtreeRoot.author.verified ? ' (verified)' : ''}:`,
+  );
+  const subRootLikes = subtreeRoot.metrics.likes ?? 0;
+  lines.push(`- id=${subtreeRoot.id} (♥${subRootLikes}): "${truncateText(subtreeRoot.text, 600)}"`);
+
+  if (nestedReplies.length > 0) {
+    lines.push('');
+    lines.push(`NESTED REPLIES IN THIS SUBTREE (${nestedReplies.length}):`);
+    for (const r of nestedReplies) {
+      const indent = '  '.repeat(Math.max(0, r.depth - subtreeRoot.depth));
+      const likes = r.metrics.likes ?? 0;
+      lines.push(
+        `${indent}- id=${r.id} @${r.author.handle} (♥${likes}): "${truncateText(r.text)}"`,
+      );
+    }
+  }
+
+  lines.push('');
+  lines.push('Output a JSON object with this exact shape:');
+  lines.push('{');
+  lines.push('  "headline": "1 sentence describing the through-line of this subtree",');
+  lines.push('  "keyPoints": ["bullet 1", "bullet 2"],');
+  lines.push('  "dissent":   ["bullet 1"]');
+  lines.push('}');
+  lines.push('Constraints:');
+  lines.push('- 2-4 keyPoints.');
+  lines.push('- 0-3 dissent bullets (empty array if none).');
+  lines.push('- Output JSON only. No commentary.');
+  return lines.join('\n');
+}
+
+/** Compact shallow-analysis projection passed into the synthesis prompt. */
+export type ShallowAnalysisDigest = {
+  topic?: string;
+  tldr: string;
+  summary: string;
+  keyInsights: Array<{ insight: string; confidence: 'low' | 'medium' | 'high' }>;
+  openQuestions: string[];
+};
+
+/** SubtreeSummary projection accepted by the synthesis prompt. */
+export type SubtreeSummaryForSynthesis = {
+  rootReplyPostId: string;
+  rootReplyHandle: string;
+  replyCount: number;
+  headline: string;
+  keyPoints: string[];
+  dissent: string[];
+};
+
+/**
+ * Synthesis prompt: one final Kyma call that consumes all subtree summaries plus
+ * the shallow `analyzeThread` digest + the root post, and produces the unified
+ * deep report (topArguments, dissentMap, subThreadsWorthReading).
+ */
+export function renderDeepSynthesisPrompt(
+  rootPost: XPost,
+  shallow: ShallowAnalysisDigest,
+  subtrees: SubtreeSummaryForSynthesis[],
+): string {
+  const lines: string[] = [];
+  lines.push(`ROOT POST by @${rootPost.author.handle}:`);
+  lines.push(`"${truncateText(rootPost.text, 600)}"`);
+  lines.push('');
+  lines.push('SHALLOW THREAD-LEVEL ANALYSIS (already produced):');
+  if (shallow.topic) lines.push(`- topic: ${shallow.topic}`);
+  lines.push(`- tldr: ${shallow.tldr}`);
+  lines.push(`- summary: ${shallow.summary}`);
+  if (shallow.keyInsights.length > 0) {
+    lines.push('- keyInsights:');
+    for (const k of shallow.keyInsights) {
+      lines.push(`  • [${k.confidence}] ${k.insight}`);
+    }
+  }
+  if (shallow.openQuestions.length > 0) {
+    lines.push('- openQuestions:');
+    for (const q of shallow.openQuestions) lines.push(`  • ${q}`);
+  }
+  lines.push('');
+  lines.push(`SUBTREE SUMMARIES (${subtrees.length}):`);
+  for (const s of subtrees) {
+    lines.push(
+      `- @${s.rootReplyHandle} (id=${s.rootReplyPostId}, ${s.replyCount} replies): ${s.headline}`,
+    );
+    for (const p of s.keyPoints) lines.push(`  • point: ${p}`);
+    for (const d of s.dissent) lines.push(`  • dissent: ${d}`);
+  }
+  lines.push('');
+  lines.push('Output a SINGLE JSON object with this exact shape:');
+  lines.push('{');
+  lines.push('  "topArguments": [');
+  lines.push(
+    '    { "argument": "...", "voicedBy": ["@handle"], "evidenceSubtreeIds": ["<reply id>"] }',
+  );
+  lines.push('  ],');
+  lines.push('  "dissentMap": [');
+  lines.push(
+    '    { "claim": "...", "againstOp": true, "voicedBy": ["@handle"], "evidenceSubtreeIds": ["<reply id>"] }',
+  );
+  lines.push('  ],');
+  lines.push('  "subThreadsWorthReading": [');
+  lines.push('    { "rootReplyPostId": "<reply id>", "handle": "@handle", "reason": "..." }');
+  lines.push('  ]');
+  lines.push('}');
+  lines.push('Constraints:');
+  lines.push('- 2-6 topArguments. evidenceSubtreeIds must reference real subtree reply ids above.');
+  lines.push('- 0-5 dissentMap entries (empty array if the thread is consensual).');
+  lines.push('- 1-5 subThreadsWorthReading (pick the most informative subtrees).');
+  lines.push('- Output JSON only. No commentary.');
+  return lines.join('\n');
+}

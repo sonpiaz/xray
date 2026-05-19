@@ -172,6 +172,58 @@ export function renderReportMarkdown(report: ResearchReport): string {
     }
   }
 
+  // P1.3: Deep mode subtree summaries + synthesis output. Rendered only when
+  // `--deep` ran and produced at least one subtree summary. Positioned AFTER
+  // "Dissenting Views" and BEFORE "Source — Root Post" per task brief.
+  if (report.subtreeSummaries && report.subtreeSummaries.length > 0) {
+    out.push('## Deep Analysis — Subtree Summaries');
+    for (const s of report.subtreeSummaries) {
+      out.push(
+        `### Subtree: @${s.rootReplyHandle} (${s.replyCount} ${s.replyCount === 1 ? 'reply' : 'replies'})`,
+      );
+      out.push(`**Headline:** ${s.headline}`);
+      if (s.keyPoints.length > 0) {
+        out.push('');
+        out.push('**Key points:**');
+        for (const p of s.keyPoints) out.push(`- ${p}`);
+      }
+      if (s.dissent.length > 0) {
+        out.push('');
+        out.push('**Dissent:**');
+        for (const d of s.dissent) out.push(`- ${d}`);
+      }
+      out.push('');
+    }
+
+    if (report.deepSynthesis) {
+      const syn = report.deepSynthesis;
+      if (syn.topArguments.length > 0) {
+        out.push('### Top Arguments');
+        for (const a of syn.topArguments) {
+          const voiced = a.voicedBy.length > 0 ? ` _(voiced by: ${a.voicedBy.join(', ')})_` : '';
+          out.push(`- **${a.argument}**${voiced}`);
+        }
+        out.push('');
+      }
+      if (syn.dissentMap.length > 0) {
+        out.push('### Dissent Map');
+        for (const d of syn.dissentMap) {
+          const target = d.againstOp ? 'vs OP' : 'within replies';
+          const voiced = d.voicedBy.length > 0 ? ` _(voiced by: ${d.voicedBy.join(', ')})_` : '';
+          out.push(`- _[${target}]_ ${d.claim}${voiced}`);
+        }
+        out.push('');
+      }
+      if (syn.subThreadsWorthReading.length > 0) {
+        out.push('### Sub-threads Worth Reading');
+        for (const p of syn.subThreadsWorthReading) {
+          out.push(`- **${p.handle}** — ${p.reason}`);
+        }
+        out.push('');
+      }
+    }
+  }
+
   out.push('## Source — Root Post');
   out.push('```');
   out.push(root.text);

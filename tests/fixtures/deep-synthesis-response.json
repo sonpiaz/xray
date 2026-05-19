@@ -1,0 +1,34 @@
+{
+  "topArguments": [
+    {
+      "argument": "Scaling has decelerated and current benchmarks understate the gap.",
+      "voicedBy": ["@u2001", "@u2003"],
+      "evidenceSubtreeIds": ["2001", "2003"]
+    },
+    {
+      "argument": "Inference-time techniques (search, tools, longer context) are bridging the apparent slowdown.",
+      "voicedBy": ["@u2002"],
+      "evidenceSubtreeIds": ["2002"]
+    }
+  ],
+  "dissentMap": [
+    {
+      "claim": "OP conflates pretraining scaling with capability scaling.",
+      "againstOp": true,
+      "voicedBy": ["@u2001"],
+      "evidenceSubtreeIds": ["2001"]
+    }
+  ],
+  "subThreadsWorthReading": [
+    {
+      "rootReplyPostId": "2001",
+      "handle": "@u2001",
+      "reason": "Most-cited subtree with the clearest dissent against OP."
+    },
+    {
+      "rootReplyPostId": "2002",
+      "handle": "@u2002",
+      "reason": "Offers a concrete counter-mechanism (inference-time compute)."
+    }
+  ]
+}
