@@ -64,3 +64,21 @@ export {
   type AnalyzeFramesOptions,
   type AnalyzeFramesResult,
 } from './vision.ts';
+export {
+  clearVideoCache,
+  evictVideoFilesLRU,
+  getCachedTranscript,
+  getCachedVideoFile,
+  getCachedVision,
+  putCachedTranscript,
+  putCachedVision,
+  recordVideoFile,
+  videoCacheDir,
+  videoCacheInfo,
+  videoFileDir,
+  videoFilePathFor,
+  type CachedTranscript,
+  type CachedVideoFile,
+  type CachedVision,
+  type VideoCacheInfo,
+} from './cache.ts';
