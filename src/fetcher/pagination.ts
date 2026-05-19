@@ -307,12 +307,36 @@ function attachInitialNested(aggregate: ParsedDetail): void {
   aggregate.comments.splice(0, aggregate.comments.length, ...keep);
 }
 
+/**
+ * Tree depth reached, 1-indexed: 1 = top-level replies present, 2 = one level
+ * of nested replies present, etc. 0 means no replies at all.
+ *
+ * `XComment.depth` is 0-indexed (top-level = 0) so that arithmetic on
+ * cursor.depth (which is 1-indexed because it counts "expand this nested
+ * level") works out. We add 1 here so `coverage.achievedDepth` is comparable
+ * to `coverage.targetDepth` (also 1-indexed, e.g. `--depth 3` = "go 3 levels
+ * deep into the tree"). Bug surfaced on live test 2026-05-19 where 73 top-
+ * level replies reported achievedDepth=0.
+ */
 function computeAchievedDepth(comments: XComment[]): number {
+  if (comments.length === 0) return 0;
   let max = 0;
   for (const c of comments) {
     if (c.depth > max) max = c.depth;
     if (c.replies.length > 0) {
-      const sub = computeAchievedDepth(c.replies);
+      const sub = maxCommentDepth(c.replies);
+      if (sub > max) max = sub;
+    }
+  }
+  return max + 1;
+}
+
+function maxCommentDepth(comments: XComment[]): number {
+  let max = 0;
+  for (const c of comments) {
+    if (c.depth > max) max = c.depth;
+    if (c.replies.length > 0) {
+      const sub = maxCommentDepth(c.replies);
       if (sub > max) max = sub;
     }
   }

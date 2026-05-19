@@ -91,18 +91,32 @@ Constraints:
 // P1.1 — Classification prompts
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const CLASSIFICATION_SYSTEM_PROMPT = `You classify X (Twitter) replies.
-For each reply, output: stance (agree|disagree|neutral|question|humor|meta),
-quality (substantive|anecdotal|noise|expert|correction),
-and qualityScore (float 0.0-1.0).
+export const CLASSIFICATION_SYSTEM_PROMPT = `You classify X (Twitter) replies along TWO independent axes.
+
+AXIS 1 — stance (ONE OF EXACTLY): agree | disagree | neutral | question | humor | meta
+AXIS 2 — quality (ONE OF EXACTLY): substantive | anecdotal | noise | expert | correction
+AXIS 3 — qualityScore (float 0.0-1.0)
+
+CRITICAL: stance values and quality values are DIFFERENT vocabularies. NEVER put a
+quality word into the stance field, or a stance word into the quality field.
+- A noisy "+1" reply has stance="neutral" + quality="noise" (NOT stance="noise").
+- An expert disagreement has stance="disagree" + quality="expert".
+- A pure joke has stance="humor" + quality="anecdotal" (or "noise" if zero substance).
+
+Examples (one item each):
+  { "id": "1", "stance": "neutral", "quality": "noise",       "qualityScore": 0.05 }   // "+1"
+  { "id": "2", "stance": "agree",   "quality": "substantive", "qualityScore": 0.70 }   // adds evidence supporting OP
+  { "id": "3", "stance": "disagree","quality": "expert",      "qualityScore": 0.85 }   // domain expert pushes back
+  { "id": "4", "stance": "humor",   "quality": "anecdotal",   "qualityScore": 0.30 }   // funny but light
+  { "id": "5", "stance": "question","quality": "substantive", "qualityScore": 0.55 }   // probing follow-up
 
 Rules:
 - Stance is relative to the ROOT POST's main claim. A reply that disagrees with another
-  reply but agrees with OP = "agree".
+  reply but agrees with OP → stance="agree".
 - qualityScore measures information value, not agreement with OP.
-- Humor that makes a substantive point = quality "substantive" + stance "humor".
 - Corrections with evidence > corrections without evidence (0.8+ vs 0.5).
-- One-word replies, emoji-only, "ratio", "+1" = noise + qualityScore 0.0-0.05.
+- One-word replies, emoji-only, "ratio", "+1" → quality="noise", qualityScore 0.0-0.05,
+  stance still gets a real value (usually "neutral" or "agree"/"disagree" if directional).
 - Output VALID JSON ONLY — no markdown fences, no preamble.`;
 
 function truncateText(s: string, max = 400): string {

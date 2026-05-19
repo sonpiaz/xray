@@ -36,6 +36,52 @@ const ClassificationResponseSchema = z.object({
   classifications: z.array(ClassificationItemSchema),
 });
 
+const STANCE_VALUES = new Set(['agree', 'disagree', 'neutral', 'question', 'humor', 'meta']);
+const QUALITY_VALUES = new Set(['substantive', 'anecdotal', 'noise', 'expert', 'correction']);
+
+/**
+ * Repair common model confusions before Zod sees the payload. Mistral / Gemini
+ * sometimes swap the stance and quality vocabularies — e.g. emits
+ * `stance: "noise"` when it means quality. We map known cross-axis values to
+ * the closest valid stance/quality without dropping the row.
+ *
+ * Conservative: only repairs values we recognize from the OTHER axis. Anything
+ * truly unknown still falls through to Zod and the row is skipped.
+ *
+ * Surfaced on the first live `xray thread` 2026-05-19 where Gemini-2.5-flash
+ * returned `stance: "noise"` for 4 of 40 replies, failing the entire batch.
+ */
+function repairClassificationResponse(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') return payload;
+  const obj = payload as Record<string, unknown>;
+  const list = obj.classifications;
+  if (!Array.isArray(list)) return payload;
+  let repaired = 0;
+  const out = list.map((raw) => {
+    if (!raw || typeof raw !== 'object') return raw;
+    const item = { ...(raw as Record<string, unknown>) };
+    const stance = typeof item.stance === 'string' ? item.stance : undefined;
+    const quality = typeof item.quality === 'string' ? item.quality : undefined;
+    // Stance carries a quality word → coerce to "neutral", keep the value as quality if quality missing.
+    if (stance && !STANCE_VALUES.has(stance) && QUALITY_VALUES.has(stance)) {
+      if (!quality || !QUALITY_VALUES.has(quality)) item.quality = stance;
+      item.stance = 'neutral';
+      repaired += 1;
+    }
+    // Quality carries a stance word → coerce to "anecdotal" (least committal).
+    if (quality && !QUALITY_VALUES.has(quality) && STANCE_VALUES.has(quality)) {
+      if (!stance || !STANCE_VALUES.has(stance)) item.stance = quality;
+      item.quality = 'anecdotal';
+      repaired += 1;
+    }
+    return item;
+  });
+  if (repaired > 0) {
+    logger.debug('classification response repaired', { repaired, total: list.length });
+  }
+  return { ...obj, classifications: out };
+}
+
 export type ClassifyOutcome = {
   classifiedCount: number;
   callCount: number;
@@ -160,6 +206,12 @@ async function classifyBatch(
 
   const userMsg = renderClassificationPrompt(rootPost, batch);
 
+  // Budget: ~60 tokens per item ({id, stance, quality, qualityScore} + JSON
+  // overhead) × MAX_REPLIES_IN_PROMPT=40 ≈ 2400 tokens for the array alone.
+  // Original 2000 max truncated mid-string on full batches → JSON.parse failed,
+  // 0 cookies classified. 6000 gives 2.5x headroom for the worst-case 40-item
+  // batch and is still well under any Kyma context limit. Surfaced by the
+  // first live `xray thread` on 2026-05-19.
   const result = await chat({
     messages: [
       { role: 'system', content: CLASSIFICATION_SYSTEM_PROMPT },
@@ -167,7 +219,7 @@ async function classifyBatch(
     ],
     jsonMode: true,
     temperature: 0.2,
-    maxTokens: 2000,
+    maxTokens: 6000,
     cacheKey: batchCacheKey,
   });
 
@@ -175,13 +227,17 @@ async function classifyBatch(
   try {
     parsed = JSON.parse(stripJsonFence(result.content));
   } catch (err) {
+    // A common cause of JSON.parse failure here is the model output being
+    // truncated by max_tokens — the array starts but never closes. Surface
+    // both the parse failure AND a length hint so future debugging is fast.
     throw new ParseError(
-      `Kyma classification returned non-JSON: ${result.content.slice(0, 200)}`,
+      `Kyma classification returned unparseable JSON (len=${result.content.length}, last 80=${JSON.stringify(result.content.slice(-80))}): ${result.content.slice(0, 200)}`,
       err,
     );
   }
 
-  const validated = ClassificationResponseSchema.safeParse(parsed);
+  const repaired = repairClassificationResponse(parsed);
+  const validated = ClassificationResponseSchema.safeParse(repaired);
   if (!validated.success) {
     throw new ParseError(`Kyma classification failed schema: ${validated.error.message}`);
   }
