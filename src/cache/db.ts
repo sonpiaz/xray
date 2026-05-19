@@ -120,6 +120,16 @@ const MIGRATIONS = [
    );`,
   'CREATE INDEX IF NOT EXISTS idx_embedding_meta_author ON embedding_meta(author_handle);',
   'CREATE INDEX IF NOT EXISTS idx_embedding_meta_type ON embedding_meta(entity_type);',
+  // ── P4.2 — Profile cache ───────────────────────────────────────────
+  // Cache key is the lowercased handle (no leading @). Stores the full
+  // ProfileReport JSON. 24h TTL is enforced inside src/cache/profiles.ts
+  // via isFresh() with a hardcoded staleness window (NOT the global TTL
+  // — profile freshness is independent of fetch caching).
+  `CREATE TABLE IF NOT EXISTS profile_cache (
+     handle TEXT PRIMARY KEY,
+     report_json TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );`,
 ];
 
 export function getDb(): Database {

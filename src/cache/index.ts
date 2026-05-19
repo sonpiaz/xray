@@ -14,6 +14,7 @@ import { closeDb, getDb } from './db.ts';
 export { closeDb, getDb, isFresh } from './db.ts';
 export * from './kyma.ts';
 export * from './posts.ts';
+export * from './profiles.ts';
 export * from './threads.ts';
 
 export type CacheInfo = {
