@@ -27,6 +27,13 @@ export type CommentClassification = z.infer<typeof CommentClassificationSchema>;
 const XCommentBase = XPostSchema.extend({
   depth: z.number().int().nonnegative().default(0),
   classification: CommentClassificationSchema.optional(),
+  /**
+   * P1.6: true when this reply is from the ROOT post's author replying to a
+   * commenter (i.e. same author as root but `inReplyToPostId !== root.id`).
+   * Surfaces high-signal OP engagement separately from third-party replies.
+   * Optional/omitted on all other comments to keep the diff small.
+   */
+  isAuthorReply: z.boolean().optional(),
 });
 
 export type XComment = z.infer<typeof XCommentBase> & {

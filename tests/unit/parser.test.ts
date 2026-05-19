@@ -32,3 +32,54 @@ describe('parseTweetDetail', () => {
     expect(parsed.rootPost?.url).toBe('https://x.com/alice/status/1001');
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// P1.6 — self-thread + author-engagement routing
+// ────────────────────────────────────────────────────────────────────────────
+
+const selfThreadFixture = JSON.parse(
+  readFileSync(join(__dirname, '..', 'fixtures', 'tweet-detail-self-thread.min.json'), 'utf8'),
+);
+
+describe('parseTweetDetail — P1.6 self-thread + author engagement', () => {
+  const parsed = parseTweetDetail(selfThreadFixture, '1001');
+
+  it('extracts root post by alice', () => {
+    expect(parsed.rootPost?.id).toBe('1001');
+    expect(parsed.rootPost?.author.handle).toBe('alice');
+  });
+
+  it('routes chain continuation (in_reply_to=root) to authorPosts', () => {
+    const ids = parsed.authorPosts.map((p) => p.id);
+    expect(ids).toContain('1002');
+  });
+
+  it('routes module continuation without in_reply_to to authorPosts', () => {
+    const ids = parsed.authorPosts.map((p) => p.id);
+    expect(ids).toContain('1003');
+  });
+
+  it('treats the same-author reply to a commenter as a comment, not authorPost', () => {
+    const ids = parsed.authorPosts.map((p) => p.id);
+    expect(ids).not.toContain('2099');
+  });
+
+  it('flags the author-reply-to-commenter with isAuthorReply=true', () => {
+    const authorReply = parsed.comments.find((c) => c.id === '2099');
+    expect(authorReply).toBeDefined();
+    expect(authorReply?.isAuthorReply).toBe(true);
+    expect(authorReply?.inReplyToPostId).toBe('2001');
+  });
+
+  it('keeps third-party replies as plain comments without isAuthorReply', () => {
+    const bob = parsed.comments.find((c) => c.id === '2001');
+    const carol = parsed.comments.find((c) => c.id === '3001');
+    expect(bob?.isAuthorReply).toBeUndefined();
+    expect(carol?.isAuthorReply).toBeUndefined();
+  });
+
+  it('produces the expected authorPosts.length=2 and comments.length=3', () => {
+    expect(parsed.authorPosts).toHaveLength(2);
+    expect(parsed.comments).toHaveLength(3);
+  });
+});

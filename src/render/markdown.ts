@@ -224,16 +224,53 @@ export function renderReportMarkdown(report: ResearchReport): string {
     }
   }
 
-  out.push('## Source — Root Post');
-  out.push('```');
-  out.push(root.text);
-  out.push('```');
+  // P1.6: unify root + author follow-ups into a single numbered "Author Thread"
+  // code block so readers don't conclude the OP posted just one tweet. Falls
+  // back to the original "Source — Root Post" heading when there are no
+  // follow-ups (preserves the simpler look + keeps existing tests stable).
+  const authorPosts = report.thread.authorPosts;
+  if (authorPosts.length > 0) {
+    const total = 1 + authorPosts.length;
+    out.push('## Source — Author Thread');
+    out.push('```text');
+    out.push(`[1/${total}] ${root.text}`);
+    for (let i = 0; i < authorPosts.length; i++) {
+      out.push('');
+      out.push(`[${i + 2}/${total}] ${authorPosts[i]?.text ?? ''}`);
+    }
+    out.push('```');
+  } else {
+    out.push('## Source — Root Post');
+    out.push('```');
+    out.push(root.text);
+    out.push('```');
+  }
 
-  if (report.thread.authorPosts.length > 0) {
+  // P1.6: author engagement section — same-author replies to commenters,
+  // pulled out as their own block because they're the highest-signal context
+  // a reader can get beyond the OP's main thesis. Cap at 10 entries.
+  const authorReplies = flattenComments(report.thread.comments)
+    .filter((c) => c.isAuthorReply)
+    .slice(0, 10);
+  if (authorReplies.length > 0) {
     out.push('');
-    out.push('### Author follow-ups');
-    for (const p of report.thread.authorPosts) {
-      out.push(`- ${p.text.replace(/\n/g, ' ')}`);
+    out.push(`### Author engagement (${authorReplies.length} replies to commenters)`);
+    const authorHandle = root.author.handle;
+    for (const reply of authorReplies) {
+      const parentId = reply.inReplyToPostId;
+      const parent = parentId ? postById(report, parentId) : undefined;
+      const replySnippet = reply.text.replace(/\s+/g, ' ').slice(0, 180);
+      const replyTail = reply.text.length > 180 ? '…' : '';
+      if (parent) {
+        const parentSnippet = parent.text.replace(/\s+/g, ' ').slice(0, 120);
+        const parentTail = parent.text.length > 120 ? '…' : '';
+        out.push(
+          `- @${parent.author.handle} asked/said: "${parentSnippet}${parentTail}" → @${authorHandle}: "${replySnippet}${replyTail}"`,
+        );
+      } else {
+        const parentNote = parentId ? ` (in reply to ${parentId})` : '';
+        out.push(`- @${authorHandle}${parentNote}: "${replySnippet}${replyTail}"`);
+      }
     }
   }
 

@@ -231,7 +231,7 @@ export function parseTweetDetail(payload: unknown, rootId: string): ParsedDetail
     // TimelineTimelineItem (single tweet)
     const itemContent = obj(content.itemContent);
     if (itemContent && itemContent.itemType === 'TimelineTweet') {
-      addTweet(itemContent, result, rootId, seen, 0);
+      addTweet(itemContent, result, rootId, seen, 0, false);
       continue;
     }
 
@@ -240,6 +240,12 @@ export function parseTweetDetail(payload: unknown, rootId: string): ParsedDetail
     //   (b) a "VerticalConversation" of nested replies, where items[i] sit at increasing depth.
     // We let addTweet() figure out per-tweet routing; depth is the item's position
     // within the module (0 = top-of-module reply, 1 = reply-to-reply, ...).
+    //
+    // P1.6: same-author tweets that appear inside a module without an explicit
+    // `in_reply_to_status_id_str` are still self-thread continuations — X's
+    // VerticalConversation packs Karpathy-style "2/N, 3/N" tweets here without
+    // the in_reply_to back-pointer. We pass `fromModule=true` so addTweet()
+    // can route them to `authorPosts` even when `post.isReply === false`.
     const items = arr(content.items);
     if (items) {
       let posIdx = 0;
@@ -249,7 +255,7 @@ export function parseTweetDetail(payload: unknown, rootId: string): ParsedDetail
         const itc = obj(ic?.itemContent);
         if (!itc) continue;
         if (itc.itemType === 'TimelineTweet') {
-          addTweet(itc, result, rootId, seen, posIdx);
+          addTweet(itc, result, rootId, seen, posIdx, true);
           posIdx += 1;
         }
       }
@@ -336,6 +342,7 @@ function addTweet(
   rootId: string,
   seen: Set<string>,
   depth: number,
+  fromModule: boolean,
 ): void {
   const tweetResults = obj(itemContent.tweet_results);
   const post = parsePost(tweetResults?.result);
@@ -348,10 +355,27 @@ function addTweet(
     return;
   }
 
-  if (result.rootPost && post.author.id === result.rootPost.author.id && post.isReply) {
-    // same-author follow-up post in the same thread
-    result.authorPosts.push(post);
-    return;
+  // P1.6 self-thread routing. A same-author follow-up belongs in `authorPosts`
+  // when it's a chain continuation; the same author replying to a commenter is
+  // a high-signal engagement reply that stays in `comments` (flagged below).
+  if (result.rootPost && post.author.id === result.rootPost.author.id) {
+    const repliesToRoot = post.isReply && post.inReplyToPostId === rootId;
+    // A same-author tweet inside a conversation module without an explicit
+    // in_reply_to back-pointer is still a self-thread continuation (X packs
+    // "2/N, 3/N" Karpathy-style tweets this way). `fromModule` gates this
+    // looser branch so a top-level same-author reply-to-commenter doesn't get
+    // mis-routed.
+    const moduleContinuation = fromModule && !post.isReply;
+    if (repliesToRoot || moduleContinuation) {
+      result.authorPosts.push(post);
+      return;
+    }
+    if (post.isReply && post.inReplyToPostId && post.inReplyToPostId !== rootId) {
+      // Author replying to a commenter — keep in comments tree but flag it so
+      // the renderer + LLM prompt can surface it as high-signal engagement.
+      result.comments.push({ ...post, depth, replies: [], isAuthorReply: true });
+      return;
+    }
   }
 
   if (post.isQuote && post.quotedPostId === rootId) {

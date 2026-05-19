@@ -9,6 +9,8 @@ Hard rules:
 - Never invent facts. If something isn't in the thread, do not claim it.
 - Quote-tweet authors are different speakers from the root author.
 - Distinguish the OP's claims from replies' reactions.
+- ROOT POST + AUTHOR FOLLOW-UPS form a single narrative thesis. Summarize them together, not separately.
+- Author replies to commenters (marked [AUTHOR REPLY] in the rendered prompt) are HIGH-SIGNAL engagement; quote them in 'notableReplies' even if engagement metrics are low.
 - Prefer short, dense sentences over flowery prose.
 - Output VALID JSON ONLY when JSON is requested — no markdown fences, no preamble.`;
 
@@ -60,7 +62,10 @@ export function renderThreadForPrompt(thread: XThread): string {
     lines.push(`## REPLIES (top ${Math.min(thread.comments.length, MAX_REPLIES_IN_PROMPT)})`);
     for (const c of thread.comments.slice(0, MAX_REPLIES_IN_PROMPT)) {
       const likes = c.metrics.likes ?? 0;
-      lines.push(`- [${c.id}] (♥${likes}) @${c.author.handle}: ${c.text}`);
+      // P1.6: prefix same-author replies-to-commenters with [AUTHOR REPLY] so
+      // the model treats them as HIGH-SIGNAL OP engagement (see SYSTEM_PROMPT).
+      const tag = c.isAuthorReply ? '[AUTHOR REPLY] ' : '';
+      lines.push(`- ${tag}[${c.id}] (♥${likes}) @${c.author.handle}: ${c.text}`);
     }
   }
 
