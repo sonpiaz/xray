@@ -11,6 +11,9 @@
  *
  * Returns `null` for non-URLs and known non-article resources (media
  * files, mailto, etc.). Pure function — no I/O.
+ *
+ * P3.1 — Adds `detectExternalPlatform()` for downstream logging/metrics.
+ * Pure URL parsing; never gates pipeline behavior.
  */
 import type { ArticleSource } from '../models/article.ts';
 
@@ -79,6 +82,47 @@ export function detectArticleSource(url: string): ArticleSource | null {
   }
 
   return 'external-html';
+}
+
+/**
+ * P3.1 — Coarse platform identifier surfaced on `ArticleBody.platform` for
+ * logging/metrics only. Never gates pipeline behavior. Domain heuristics
+ * are intentionally simple — false positives are tolerable because the
+ * Tier 1/2/3 fetcher works on any HTML regardless of the platform tag.
+ */
+export type ExternalPlatform = 'substack' | 'medium' | 'devto' | 'github' | 'wordpress' | 'generic';
+
+/**
+ * Classify an external HTML URL's host into a coarse `ExternalPlatform`.
+ *
+ * Heuristics:
+ *   - Substack: `*.substack.com` (custom-domain Substacks are detected
+ *     only at fetch time via HTML fingerprint — out of scope for P3.1).
+ *   - Medium:   `medium.com`, `*.medium.com`.
+ *   - dev.to:   `dev.to`.
+ *   - GitHub:   `github.com` (blob, issues, gists, README).
+ *   - WordPress: `*.wordpress.com`.
+ *   - Anything else: `'generic'`.
+ *
+ * Returns `'generic'` (never null) for inputs that fail URL parsing so
+ * callers can use the result as a label without conditional checks.
+ */
+export function detectExternalPlatform(url: string): ExternalPlatform {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'generic';
+  }
+  const host = parsed.hostname.toLowerCase();
+
+  if (host === 'substack.com' || host.endsWith('.substack.com')) return 'substack';
+  if (host === 'medium.com' || host.endsWith('.medium.com')) return 'medium';
+  if (host === 'dev.to' || host === 'www.dev.to') return 'devto';
+  if (host === 'github.com' || host === 'www.github.com' || host === 'gist.github.com')
+    return 'github';
+  if (host === 'wordpress.com' || host.endsWith('.wordpress.com')) return 'wordpress';
+  return 'generic';
 }
 
 /**
