@@ -85,6 +85,41 @@ const MIGRATIONS = [
    );`,
   'CREATE INDEX IF NOT EXISTS idx_article_bodies_fetched ON article_bodies(fetched_at);',
   'CREATE INDEX IF NOT EXISTS idx_article_summaries_created ON article_summaries(created_at);',
+  // ── P4.0 — Embedding metadata + fallback vector store ──────────────
+  // `embedding_meta` tracks every embedded entity (post / comment /
+  // article passage) with a content_hash for incremental re-embed
+  // dedup, the snippet for search-result display, and the rowid that
+  // joins into the sqlite-vec virtual table (when the extension loads).
+  //
+  // `embedding_vectors` is the pure-JS-cosine fallback store. The vec0
+  // virtual table is created at runtime in src/embeddings/store.ts only
+  // when sqlite-vec's extension loads successfully — keeping it out of
+  // MIGRATIONS means a startup with a busted vec0 binary still opens
+  // the db cleanly. When the extension fails, we write into the BLOB
+  // column here and brute-force cosine over the whole table.
+  //
+  // Both tables are keyed by (entity_type, entity_id); we INSERT … ON
+  // CONFLICT to upsert so re-embeds (content_hash change) overwrite.
+  `CREATE TABLE IF NOT EXISTS embedding_meta (
+     entity_type TEXT NOT NULL,
+     entity_id TEXT NOT NULL,
+     content_hash TEXT NOT NULL,
+     source_url TEXT,
+     author_handle TEXT,
+     snippet TEXT NOT NULL,
+     model_version TEXT NOT NULL,
+     vec_rowid INTEGER,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (entity_type, entity_id)
+   );`,
+  `CREATE TABLE IF NOT EXISTS embedding_vectors (
+     entity_type TEXT NOT NULL,
+     entity_id TEXT NOT NULL,
+     vector BLOB NOT NULL,
+     PRIMARY KEY (entity_type, entity_id)
+   );`,
+  'CREATE INDEX IF NOT EXISTS idx_embedding_meta_author ON embedding_meta(author_handle);',
+  'CREATE INDEX IF NOT EXISTS idx_embedding_meta_type ON embedding_meta(entity_type);',
 ];
 
 export function getDb(): Database {
