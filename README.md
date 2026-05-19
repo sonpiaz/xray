@@ -30,7 +30,7 @@ xray thread https://x.com/karpathy/status/1234567890
 
 ## Status
 
-**v0.4.0 — Phase 3 (External content understanding).** XRay now reads articles linked from threads + cross-references tweet claims to article passages. See [CHANGELOG.md](./CHANGELOG.md) for full history.
+**v0.5.0 — Phase 4 (Semantic search + Profile analysis).** XRay now embeds every cached post/comment/article locally (MiniLM-L6-v2, ~23 MB), enabling semantic search across all cached content and LLM-synthesized profile reports for any X handle you've already researched. See [CHANGELOG.md](./CHANGELOG.md) for full history.
 
 | Phase | What it adds | Status |
 |---|---|---|
@@ -39,8 +39,17 @@ xray thread https://x.com/karpathy/status/1234567890
 | 1.5 | Invisible 3-tier auth (cookie → SSR → saved auth) + `--mode` overrides + `xray auth --status` | Done (v0.2.0) |
 | 2 | Video understanding (transcript + scene-detect frames + synthesis) | Done (v0.3.0) |
 | 3 | External content (X Articles + external links + cross-reference) | Done (v0.4.0) |
-| 4 | Semantic search + narrative tracking | Planned |
+| 4 | Semantic search + profile analysis | Done (v0.5.0 — partial: search + profile; narrative tracking + batch + `--fresh` profile deferred to P5) |
 | 5 | Polish + OSS readiness | Planned |
+
+**v0.5.0 highlights:**
+
+- Local embeddings via MiniLM-L6-v2 (~23 MB MiniLM model downloaded on first use, runs in Bun, **zero API cost**).
+- `xray search "<query>"` finds cached content by semantic similarity — `--limit`, `--threshold`, `--type`, optional `--rerank` (~$0.005).
+- `xray profile @<handle>` builds topic + stance + expertise summary from cached threads (3 Kyma calls, ~$0.05-0.20 per profile, 24h cache).
+- `xray_search` + `xray_profile` MCP tools for agent callers.
+- `xray cache clear --profiles` for purging profile cache only (preserves posts/threads/embeddings).
+- See [CHANGELOG.md](./CHANGELOG.md) for the full v0.5.0 entry.
 
 **v0.4.0 highlights:**
 
@@ -131,9 +140,20 @@ bun run xray thread https://x.com/karpathy/status/1234567890 --articles
 # both video AND articles in one thread call
 bun run xray thread https://x.com/karpathy/status/1234567890 --video --articles
 
-# cache controls (now includes video cache stats)
+# semantic search across your cached content (zero API cost; runs MiniLM locally)
+bun run xray cache embed                   # one-time: embed every cached post/comment/article
+bun run xray search "transformer scaling"  # find cached items by meaning
+bun run xray search "AI safety" --rerank   # optional LLM rerank (~$0.005)
+
+# build a profile from cached content for any X handle you've researched
+bun run xray profile @karpathy            # markdown report (topics + stance + expertise)
+bun run xray profile @karpathy --json     # structured JSON for agents
+bun run xray profile @karpathy --no-cache # force re-synthesis (skip 24h cache)
+
+# cache controls (now includes video cache stats + embedding counts)
 bun run xray cache info
-bun run xray cache clear
+bun run xray cache clear                  # clear everything except embeddings + profiles
+bun run xray cache clear --profiles       # clear only profile cache
 ```
 
 ---
@@ -166,11 +186,13 @@ Add to your MCP config:
 }
 ```
 
-The agent gets three tools:
+The agent gets five tools:
 
 - `xray_thread({ url, video?, articles?, ... })` → `ResearchReport` (with optional embedded `videoAnalysis[]` when `video: true`, and `articleSummaries[]` when `articles: true`).
 - `xray_video({ url, raw?, format? })` → `VideoReport` (standalone video analysis).
 - `xray_article({ url, tweetContext?, synthesize?, format? })` → `ArticleSummary` (standalone article analysis; defaults `synthesize: true`, opposite of `xray_video`).
+- `xray_search({ query, limit?, threshold?, type?, rerank? })` → `SearchResponse` (semantic search across cached XRay content; zero API cost, optional rerank ~$0.005).
+- `xray_profile({ handle, noCache?, model? })` → `ProfileReport` (topics + stance + expertise + notable quotes from cached content; 3 Kyma calls ~$0.05-0.20).
 
 ---
 

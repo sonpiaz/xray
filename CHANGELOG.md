@@ -4,6 +4,33 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-05-19
+
+### Added
+- **Advanced research (Phase 4 — partial).** Local-first semantic search + LLM-synthesized profile reports across all cached content. Opt-in commands; no change to existing `xray thread` behavior.
+- **Local embeddings via @xenova/transformers** (`Xenova/all-MiniLM-L6-v2`, ~23 MB int8 model, one-time download). 384-dim vectors stored in SQLite. Zero API cost, no data exfiltration. Bun-compatible (validated via spike before P4.0).
+- **`xray cache embed` command** — walk all cached posts, threads, comments, and article bodies; embed any unembedded or content-drifted items. Idempotent. Reports `{ embedded, skipped, durationMs }`.
+- **`xray search "<query>"` standalone command** with `--limit`, `--threshold`, `--type`, `--rerank` flags. Returns top-K cached matches sorted by cosine similarity. Optional Kyma rerank for ~$0.005 extra.
+- **`xray_search` MCP tool** for agent callers.
+- **`xray profile @<handle>` standalone command** — cache-only aggregation; builds topics + stance + expertise areas + notable quotes from cached content. 3 Kyma calls (~$0.05-0.20 per profile). 24h cache via `profile_cache` table. Lenient JSON repair on the 3 synthesis calls — drops unrepairable rows, keeps valid (P1.6 / P3.2 pattern).
+- **`xray_profile` MCP tool**.
+- **`xray cache clear --profiles`** for purging profile cache only (preserves posts/threads/embeddings).
+- **`sqlite-vec` extension** loaded when available; pure-JS cosine fallback when not (Bun's extension loading is limited). JS fallback is fast for <10k vectors and is what most users will run.
+
+### Changed
+- `package.json`, CLI, and MCP server version bumped to `0.5.0`.
+
+### Dependencies (new in v0.5.0 — first introduced in P4.0)
+- `@xenova/transformers` (~23 MB MiniLM model downloaded on first use, cached at `~/.xray/models/`).
+- `sqlite-vec` (optional — runtime loadable extension; falls back to pure-JS cosine when not loadable, e.g., on this Bun build).
+
+### Out of scope (deferred to P5+)
+- Narrative / controversy tracking (temporal stance drift).
+- Batch research (`xray batch`).
+- `--fresh N` profile fetching (would require an X timeline fetcher). The `--fresh` flag is present on the CLI + MCP shape today but silently degrades to cache-only with a `warnings[]` entry.
+- Custom embedding models (BYOM).
+- Profile comparison (A vs B).
+
 ## [0.4.0] — 2026-05-19
 
 ### Added
