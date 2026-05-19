@@ -31,6 +31,20 @@ export const ThreadCoverageSchema = z.object({
 });
 export type ThreadCoverage = z.infer<typeof ThreadCoverageSchema>;
 
+/**
+ * P1.1: aggregate stance counts across all classified replies in the thread.
+ * Optional on ResearchReport — absent if no classification ran.
+ */
+export const StanceDistributionSchema = z.object({
+  agree: z.number().int().nonnegative().default(0),
+  disagree: z.number().int().nonnegative().default(0),
+  neutral: z.number().int().nonnegative().default(0),
+  question: z.number().int().nonnegative().default(0),
+  humor: z.number().int().nonnegative().default(0),
+  meta: z.number().int().nonnegative().default(0),
+});
+export type StanceDistribution = z.infer<typeof StanceDistributionSchema>;
+
 export const ResearchReportSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]).default(1),
   generatedAt: z.string().datetime(),
@@ -48,5 +62,6 @@ export const ResearchReportSchema = z.object({
   openQuestions: z.array(z.string()).default([]),
   warnings: z.array(z.string()).default([]),
   coverage: ThreadCoverageSchema.optional(),
+  stanceDistribution: StanceDistributionSchema.optional(),
 });
 export type ResearchReport = z.infer<typeof ResearchReportSchema>;

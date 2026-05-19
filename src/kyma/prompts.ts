@@ -1,3 +1,5 @@
+import type { XComment } from '../models/comment.ts';
+import type { XPost } from '../models/post.ts';
 import type { XThread } from '../models/thread.ts';
 
 const SYSTEM_PROMPT = `You are XRay, a research assistant that analyzes X (Twitter) threads.
@@ -14,7 +16,7 @@ export function systemPrompt(): string {
   return SYSTEM_PROMPT;
 }
 
-const MAX_REPLIES_IN_PROMPT = 40;
+export const MAX_REPLIES_IN_PROMPT = 40;
 
 export function renderThreadForPrompt(thread: XThread): string {
   const lines: string[] = [];
@@ -84,3 +86,50 @@ Constraints:
 - 0-4 openQuestions.
 - evidencePostIds MUST reference actual ids from the thread above.
 - Output JSON only. No commentary.`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1.1 — Classification prompts
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CLASSIFICATION_SYSTEM_PROMPT = `You classify X (Twitter) replies.
+For each reply, output: stance (agree|disagree|neutral|question|humor|meta),
+quality (substantive|anecdotal|noise|expert|correction),
+and qualityScore (float 0.0-1.0).
+
+Rules:
+- Stance is relative to the ROOT POST's main claim. A reply that disagrees with another
+  reply but agrees with OP = "agree".
+- qualityScore measures information value, not agreement with OP.
+- Humor that makes a substantive point = quality "substantive" + stance "humor".
+- Corrections with evidence > corrections without evidence (0.8+ vs 0.5).
+- One-word replies, emoji-only, "ratio", "+1" = noise + qualityScore 0.0-0.05.
+- Output VALID JSON ONLY — no markdown fences, no preamble.`;
+
+function truncateText(s: string, max = 400): string {
+  const cleaned = s.replace(/\s+/g, ' ').trim();
+  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+}
+
+/**
+ * Render the user-facing classification prompt given a root post and a batch of comments.
+ * Comments may include nested replies — we flatten to a single ordered list keyed by id.
+ */
+export function renderClassificationPrompt(rootPost: XPost, batch: XComment[]): string {
+  const lines: string[] = [];
+  lines.push(`ROOT POST by @${rootPost.author.handle}:`);
+  lines.push(`"${truncateText(rootPost.text, 600)}"`);
+  lines.push('');
+  lines.push('Classify each reply below. Output a JSON object with a "classifications" array:');
+  lines.push('{');
+  lines.push('  "classifications": [');
+  lines.push('    { "id": "<reply id>", "stance": "...", "quality": "...", "qualityScore": 0.XX }');
+  lines.push('  ]');
+  lines.push('}');
+  lines.push('');
+  lines.push('REPLIES:');
+  for (const c of batch) {
+    const likes = c.metrics.likes ?? 0;
+    lines.push(`- id=${c.id} @${c.author.handle} (likes=${likes}): "${truncateText(c.text)}"`);
+  }
+  return lines.join('\n');
+}

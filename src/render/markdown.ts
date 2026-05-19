@@ -48,6 +48,23 @@ export function renderReportMarkdown(report: ResearchReport): string {
   out.push(report.summary);
   out.push('');
 
+  if (report.coverage || report.stanceDistribution) {
+    out.push('## Conversation Analysis');
+    if (report.coverage) {
+      const cov = report.coverage;
+      out.push(
+        `**Coverage:** ${cov.fetchedReplies}/${cov.targetReplies} replies fetched · depth ${cov.achievedDepth}/${cov.targetDepth} · ${cov.classifiedReplies} classified · status ${cov.status}`,
+      );
+    }
+    if (report.stanceDistribution) {
+      const d = report.stanceDistribution;
+      out.push(
+        `**Stance distribution:** ${d.agree} agree · ${d.disagree} disagree · ${d.neutral} neutral · ${d.question} question · ${d.humor} humor · ${d.meta} meta`,
+      );
+    }
+    out.push('');
+  }
+
   if (report.keyInsights.length > 0) {
     out.push('## Key Insights');
     for (const k of report.keyInsights) {

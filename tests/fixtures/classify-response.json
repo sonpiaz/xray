@@ -1,0 +1,11 @@
+{
+  "classifications": [
+    { "id": "2001", "stance": "agree", "quality": "substantive", "qualityScore": 0.78 },
+    { "id": "2002", "stance": "disagree", "quality": "expert", "qualityScore": 0.91 },
+    { "id": "2003", "stance": "humor", "quality": "noise", "qualityScore": 0.05 },
+    { "id": "2004", "stance": "question", "quality": "substantive", "qualityScore": 0.62 },
+    { "id": "2005", "stance": "neutral", "quality": "anecdotal", "qualityScore": 0.45 },
+    { "id": "2006", "stance": "meta", "quality": "noise", "qualityScore": 0.1 },
+    { "id": "2007", "stance": "agree", "quality": "correction", "qualityScore": 0.82 }
+  ]
+}

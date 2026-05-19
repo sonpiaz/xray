@@ -58,4 +58,49 @@ describe('renderReportMarkdown', () => {
     expect(md).toContain('## Open Questions');
     expect(md).toContain('learning rate');
   });
+
+  it('does NOT render Conversation Analysis when coverage + stanceDistribution are absent', () => {
+    // Phase 0 reports omit both fields; ensure the new section is gated on presence.
+    expect(md).not.toContain('## Conversation Analysis');
+  });
+});
+
+describe('renderReportMarkdown — Conversation Analysis (P1.1)', () => {
+  const reportWithClassification: ResearchReport = {
+    ...report,
+    coverage: {
+      targetDepth: 3,
+      achievedDepth: 2,
+      targetReplies: 50,
+      fetchedReplies: 47,
+      classifiedReplies: 40,
+      paginationCursors: ['CURSOR_1', 'CURSOR_2'],
+      status: 'partial',
+    },
+    stanceDistribution: {
+      agree: 18,
+      disagree: 12,
+      neutral: 8,
+      question: 5,
+      humor: 3,
+      meta: 1,
+    },
+  };
+
+  const md = renderReportMarkdown(reportWithClassification);
+
+  it('renders the Conversation Analysis heading', () => {
+    expect(md).toContain('## Conversation Analysis');
+  });
+
+  it('shows coverage line with fetched / target / depth / classified', () => {
+    expect(md).toContain('47/50 replies fetched');
+    expect(md).toContain('depth 2/3');
+    expect(md).toContain('40 classified');
+    expect(md).toContain('status partial');
+  });
+
+  it('shows stance distribution counts in fixed order', () => {
+    expect(md).toContain('18 agree · 12 disagree · 8 neutral · 5 question · 3 humor · 1 meta');
+  });
 });

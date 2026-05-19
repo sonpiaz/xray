@@ -4,8 +4,9 @@ import { logger } from '../core/logger.ts';
 import { type FetchMode, type FetchOptions, fetchThread } from '../fetcher/thread.ts';
 import { parseXUrl } from '../fetcher/url.ts';
 import { analyzeThread } from '../kyma/analyze.ts';
-import type { ResearchReport, ThreadCoverage } from '../models/report.ts';
+import type { ResearchReport, StanceDistribution, ThreadCoverage } from '../models/report.ts';
 import type { XThread } from '../models/thread.ts';
+import { classifyComments, computeStanceDistribution } from './classify.ts';
 
 export type ResearchOptions = {
   mode?: FetchMode;
@@ -82,6 +83,25 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     };
   }
 
+  // P1.1: classify replies before the thread-level analysis call so that
+  // future renderers / downstream consumers can read `comment.classification`
+  // off the thread payload that ships back in the report.
+  let stanceDistribution: StanceDistribution | undefined;
+  if (thread.comments.length > 0) {
+    const outcome = await classifyComments(thread);
+    if (outcome.classifiedCount > 0) {
+      stanceDistribution = computeStanceDistribution(thread);
+    }
+    if (coverage) {
+      coverage = { ...coverage, classifiedReplies: outcome.classifiedCount };
+    }
+    for (const w of outcome.warnings) partialWarnings.push(w);
+    logger.debug('classification done', {
+      classified: outcome.classifiedCount,
+      calls: outcome.callCount,
+    });
+  }
+
   const analysis = await analyzeThread(thread);
 
   return {
@@ -97,5 +117,6 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     openQuestions: analysis.openQuestions,
     warnings: partialWarnings,
     ...(coverage ? { coverage } : {}),
+    ...(stanceDistribution ? { stanceDistribution } : {}),
   };
 }
