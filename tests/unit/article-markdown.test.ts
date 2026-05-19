@@ -135,6 +135,81 @@ describe('renderArticleMarkdown', () => {
     const md = renderArticleMarkdown(mkSummary());
     expect(md).toContain('Cost: $0.0120');
   });
+
+  // ── P3.3 edge-case polish ───────────────────────────────────────────
+  it('defaults to "Unknown author" when byline is missing', () => {
+    const md = renderArticleMarkdown(mkSummary());
+    expect(md).toContain('Author: Unknown author');
+  });
+
+  it('defaults to "Unknown author" when byline is empty/whitespace', () => {
+    const md = renderArticleMarkdown(
+      mkSummary({
+        body: {
+          title: 'T',
+          text: 'b',
+          wordCount: 1,
+          contentSource: 'readability',
+          byline: '   ',
+        },
+      }),
+    );
+    expect(md).toContain('Author: Unknown author');
+  });
+
+  it('omits the Body Excerpt section for short articles', () => {
+    const md = renderArticleMarkdown(
+      mkSummary({
+        body: {
+          title: 'Short',
+          text: 'A short article body.',
+          wordCount: 4,
+          contentSource: 'readability',
+        },
+      }),
+    );
+    expect(md).not.toContain('Body Excerpt');
+  });
+
+  it('renders a clipped Body Excerpt for long articles (>20k chars)', () => {
+    const longBody = 'word '.repeat(5000); // 25000 chars
+    const md = renderArticleMarkdown(
+      mkSummary({
+        body: {
+          title: 'Long',
+          text: longBody,
+          wordCount: 5000,
+          contentSource: 'readability',
+        },
+      }),
+    );
+    expect(md).toContain('## Body Excerpt');
+    // Each rendered line starts with "> " (blockquote). The excerpt itself
+    // is clipped to ~3000 chars + ellipsis — assert the trailing ellipsis
+    // is present and the rendered block is dramatically smaller than the
+    // 25000-char input.
+    expect(md).toContain('…');
+    const excerptIdx = md.indexOf('## Body Excerpt');
+    const excerptBlock = md.slice(excerptIdx);
+    expect(excerptBlock.length).toBeLessThan(longBody.length / 2);
+  });
+
+  it('uses #### Body Excerpt heading in embedded mode for long articles', () => {
+    const longBody = 'x'.repeat(25000);
+    const md = renderArticleMarkdown(
+      mkSummary({
+        body: {
+          title: 'Long',
+          text: longBody,
+          wordCount: 1,
+          contentSource: 'readability',
+        },
+      }),
+      { mode: 'embedded' },
+    );
+    expect(md).toContain('#### Body Excerpt');
+    expect(md).not.toMatch(/^## Body Excerpt$/m);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────

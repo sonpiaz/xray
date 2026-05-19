@@ -6,8 +6,11 @@
  * for when the article is rendered inside a thread report (lighter
  * `###` heading vs the standalone `#` heading).
  *
- * The full renderer polish (long-article truncation, edge cases) lands
- * in P3.3 — this version covers the spec acceptance criteria for P3.2.
+ * P3.3 — Edge-case polish: missing byline degrades to "Unknown author",
+ * long article bodies (> BODY_EXCERPT_THRESHOLD_CHARS) render an excerpt
+ * block clipped to BODY_EXCERPT_CHARS so the markdown output stays
+ * agent-friendly even on huge essays. Empty cross-refs + empty errors
+ * sections were already omitted in P3.2 — kept as-is.
  */
 import type { ArticleSummary, CrossReference } from '../models/article.ts';
 
@@ -15,6 +18,19 @@ export type RenderArticleOptions = {
   /** 'standalone' (default) — top-level `#` heading. 'embedded' — `###`. */
   mode?: 'standalone' | 'embedded';
 };
+
+/**
+ * P3.3 — Long article body handling. Mirrors the
+ * `TRANSCRIPT_EXCERPT_CHARS` pattern in `video-markdown.ts`.
+ *
+ * Why a threshold + a separate excerpt size: we don't want to clip a 4k
+ * word post-mortem essay just because it's "long-ish", but a 40k word
+ * Stratechery dump would blow up an embedded thread report. Above the
+ * threshold we render a clipped excerpt; below it we omit the body
+ * block entirely (the summary already carries the meaning).
+ */
+const BODY_EXCERPT_THRESHOLD_CHARS = 20_000;
+const BODY_EXCERPT_CHARS = 3_000;
 
 /** Single-line clamp helper — keeps wide-character clamps consistent. */
 function clamp(text: string, max: number): string {
@@ -69,7 +85,11 @@ export function renderArticleMarkdown(
   lines.push('');
   lines.push(`**Source:** ${summary.url}`);
   const meta: string[] = [];
-  if (body.byline) meta.push(`Author: ${body.byline}`);
+  // P3.3 — Default to "Unknown author" so the meta line never has a
+  // dangling separator and downstream renderers can rely on a value.
+  meta.push(
+    `Author: ${body.byline && body.byline.trim().length > 0 ? body.byline : 'Unknown author'}`,
+  );
   if (body.publishedAt) meta.push(`Published: ${body.publishedAt}`);
   meta.push(`Words: ${body.wordCount}`);
   if (typeof summary.estimatedCostUsd === 'number') {
@@ -103,6 +123,22 @@ export function renderArticleMarkdown(
   if (refs && refs.length > 0) {
     lines.push(`${subHeading} Cross-References (tweet → article)`);
     for (const row of renderCrossReferenceTable(refs)) lines.push(row);
+    lines.push('');
+  }
+
+  // P3.3 — Long article excerpt. Only emitted when the body text is
+  // big enough to be worth quoting (>20k chars) — short articles are
+  // already covered by the summary block above. We clip to ~3k chars
+  // so the markdown stays embeddable.
+  const bodyText = body.text?.trim() ?? '';
+  if (bodyText.length > BODY_EXCERPT_THRESHOLD_CHARS) {
+    lines.push(`${subHeading} Body Excerpt`);
+    const excerpt = `${bodyText.slice(0, BODY_EXCERPT_CHARS).trimEnd()}…`;
+    // Blockquote — matches the video transcript pattern in
+    // `video-markdown.ts` so multi-block thread reports stay consistent.
+    for (const line of excerpt.split('\n')) {
+      lines.push(`> ${line}`);
+    }
     lines.push('');
   }
 
