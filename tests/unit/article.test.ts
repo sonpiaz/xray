@@ -696,4 +696,297 @@ describe('analyzeArticle orchestrator', () => {
       resetConfigForTests();
     }
   });
+
+  // ──────────────────────────────────────────────────────────────────
+  // P3.2 — Cross-reference stage wiring
+  // ──────────────────────────────────────────────────────────────────
+
+  describe('P3.2 cross-reference stage', () => {
+    it('calls crossReferenceArticle when tweetContext supplied + Kyma key set', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        patch(
+          'summarizeArticle',
+          vi.fn(async () => ({
+            summary: 'demo summary',
+            keyPoints: ['k1', 'k2'],
+            wordCount: 100,
+            estimatedCostUsd: 0.002,
+            cached: false,
+            model: 'gemini-2.5-flash',
+          })) as unknown as typeof articleDeps.summarizeArticle,
+        );
+        const crxSpy = vi.fn(async () => ({
+          crossReferences: [
+            {
+              tweetClaim: 'Scaling is everything',
+              articlePassage: 'Diminishing returns past 70B parameters...',
+              relationship: 'contradicts' as const,
+              confidence: 0.9,
+            },
+          ],
+          estimatedCostUsd: 0.005,
+          cached: false,
+          model: 'gemini-2.5-flash',
+        }));
+        patch(
+          'crossReferenceArticle',
+          crxSpy as unknown as typeof articleDeps.crossReferenceArticle,
+        );
+
+        const result = await analyzeArticle({
+          url,
+          cardData: fixture,
+          noCache: true,
+          tweetContext: {
+            text: 'Scaling is everything. Just keep adding parameters.',
+            postId: '999',
+          },
+        });
+
+        expect(crxSpy).toHaveBeenCalledTimes(1);
+        expect(result.crossReferences).toHaveLength(1);
+        expect(result.crossReferences?.[0]?.relationship).toBe('contradicts');
+        expect(result.costBreakdown?.crossReference).toBe(0.005);
+        // Total cost = summarize + cross-reference.
+        expect(result.estimatedCostUsd).toBeCloseTo(0.007, 5);
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+
+    it('skips cross-reference when tweetContext is absent', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        patch(
+          'summarizeArticle',
+          vi.fn(async () => ({
+            summary: 'standalone',
+            keyPoints: [],
+            wordCount: 100,
+            estimatedCostUsd: 0.001,
+            cached: false,
+            model: 'gemini-2.5-flash',
+          })) as unknown as typeof articleDeps.summarizeArticle,
+        );
+        const crxSpy = vi.fn(async () => {
+          throw new Error('should not run in standalone mode');
+        });
+        patch(
+          'crossReferenceArticle',
+          crxSpy as unknown as typeof articleDeps.crossReferenceArticle,
+        );
+
+        const result = await analyzeArticle({ url, cardData: fixture, noCache: true });
+        expect(crxSpy).not.toHaveBeenCalled();
+        expect(result.crossReferences).toEqual([]);
+        expect(result.costBreakdown?.crossReference).toBeUndefined();
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+
+    it('skips cross-reference when raw=true even with tweetContext', async () => {
+      const crxSpy = vi.fn(async () => {
+        throw new Error('should not run in raw mode');
+      });
+      patch('crossReferenceArticle', crxSpy as unknown as typeof articleDeps.crossReferenceArticle);
+
+      const result = await analyzeArticle({
+        url,
+        cardData: fixture,
+        raw: true,
+        noCache: true,
+        tweetContext: { text: 'thesis', postId: '999' },
+      });
+      expect(crxSpy).not.toHaveBeenCalled();
+      expect(result.crossReferences).toEqual([]);
+    });
+
+    it('degrades to partial=true when cross-reference throws but summary succeeded', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        patch(
+          'summarizeArticle',
+          vi.fn(async () => ({
+            summary: 'summary fine',
+            keyPoints: [],
+            wordCount: 50,
+            estimatedCostUsd: 0.001,
+            cached: false,
+            model: 'gemini-2.5-flash',
+          })) as unknown as typeof articleDeps.summarizeArticle,
+        );
+        patch(
+          'crossReferenceArticle',
+          vi.fn(async () => {
+            throw new Error('kyma 500');
+          }) as unknown as typeof articleDeps.crossReferenceArticle,
+        );
+
+        const result = await analyzeArticle({
+          url,
+          cardData: fixture,
+          noCache: true,
+          tweetContext: { text: 'thesis', postId: '999' },
+        });
+        expect(result.summary).toBe('summary fine');
+        expect(result.crossReferences).toEqual([]);
+        expect(result.partial).toBe(true);
+        expect(result.errors.some((e) => e.includes('cross-reference'))).toBe(true);
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+
+    it('uses different cache keys for different tweet contexts', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        // Pre-populate summary cache for a SPECIFIC tweet context hash.
+        const cached: ArticleSummary = {
+          url,
+          canonicalUrl: url,
+          source: 'x-article',
+          body: { title: 't', text: 't', wordCount: 1, contentSource: 'x-article-card' },
+          summary: 'cached for thesisA',
+          keyPoints: [],
+          crossReferences: [],
+          estimatedCostUsd: 0,
+          costBreakdown: {},
+          partial: false,
+          errors: [],
+          generatedAt: new Date().toISOString(),
+        };
+        // Hash for 'thesis A' is computed via the orchestrator's
+        // hashTweetContext — derive it by reusing the same djb2 logic.
+        function hash(t: string): string {
+          let h = 5381;
+          for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0;
+          return h.toString(36);
+        }
+        putCachedArticleSummary({
+          urlCanonical: url,
+          tweetContextHash: hash('thesis A'),
+          summary: cached,
+          model: 'm',
+        });
+
+        const summarizeSpy = vi.fn(async () => ({
+          summary: 'fresh for thesisB',
+          keyPoints: [],
+          wordCount: 10,
+          estimatedCostUsd: 0.001,
+          cached: false,
+          model: 'gemini-2.5-flash',
+        }));
+        patch('summarizeArticle', summarizeSpy as unknown as typeof articleDeps.summarizeArticle);
+        patch(
+          'crossReferenceArticle',
+          vi.fn(async () => ({
+            crossReferences: [],
+            estimatedCostUsd: 0,
+            cached: false,
+            model: 'gemini-2.5-flash',
+          })) as unknown as typeof articleDeps.crossReferenceArticle,
+        );
+
+        // First call hits the cache.
+        const a = await analyzeArticle({
+          url,
+          cardData: fixture,
+          tweetContext: { text: 'thesis A', postId: '1' },
+        });
+        expect(a.summary).toBe('cached for thesisA');
+        expect(summarizeSpy).not.toHaveBeenCalled();
+
+        // Second call (different thesis) misses the cache → fresh summarize.
+        const b = await analyzeArticle({
+          url,
+          cardData: fixture,
+          tweetContext: { text: 'thesis B', postId: '1' },
+        });
+        expect(b.summary).toBe('fresh for thesisB');
+        expect(summarizeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+
+    it('persists crossReferences into the summary cache', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        patch(
+          'summarizeArticle',
+          vi.fn(async () => ({
+            summary: 's',
+            keyPoints: [],
+            wordCount: 10,
+            estimatedCostUsd: 0.001,
+            cached: false,
+            model: 'gemini-2.5-flash',
+          })) as unknown as typeof articleDeps.summarizeArticle,
+        );
+        patch(
+          'crossReferenceArticle',
+          vi.fn(async () => ({
+            crossReferences: [
+              {
+                tweetClaim: 'c',
+                articlePassage: 'p',
+                relationship: 'supports' as const,
+                confidence: 0.8,
+              },
+            ],
+            estimatedCostUsd: 0.003,
+            cached: false,
+            model: 'gemini-2.5-flash',
+          })) as unknown as typeof articleDeps.crossReferenceArticle,
+        );
+
+        const tweetContext = { text: 'thesis here', postId: '777' };
+        const result = await analyzeArticle({ url, cardData: fixture, tweetContext });
+        expect(result.crossReferences).toHaveLength(1);
+
+        // Cache lookup should return the same object.
+        function hash(t: string): string {
+          let h = 5381;
+          for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0;
+          return h.toString(36);
+        }
+        const cached = getCachedArticleSummary({
+          urlCanonical: url,
+          tweetContextHash: hash('thesis here'),
+        });
+        expect(cached?.crossReferences).toHaveLength(1);
+        expect(cached?.crossReferences?.[0]?.relationship).toBe('supports');
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+  });
 });

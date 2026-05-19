@@ -2,6 +2,7 @@ import {
   ArticleError,
   ArticleParseError,
   canonicalizeArticleUrl,
+  crossReferenceArticle,
   detectArticleSource,
   fetchExternalArticle,
   getCachedArticleBody,
@@ -41,6 +42,7 @@ import {
   type ArticleSource,
   type ArticleSummary,
   ArticleSummarySchema,
+  type CrossReference,
 } from '../models/article.ts';
 // `fetchThread` is lazy-loaded inside `fetchCardForArticleUrl()` because
 // `src/fetcher/thread.ts` transitively imports `bun:sqlite` (via the
@@ -86,6 +88,7 @@ export type ArticleAnalyzeOptions = {
 export const _orchestratorDeps = {
   parseXArticle,
   summarizeArticle,
+  crossReferenceArticle,
   getCachedArticleBody,
   putCachedArticleBody,
   getCachedArticleSummary,
@@ -303,6 +306,40 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
     }
   }
 
+  // ─── Stage 3.5: cross-reference (P3.2) ─────────────────────────────
+  // Only runs when (a) tweet context was supplied, (b) we have a real
+  // body to attribute against, (c) we're not in raw mode, and (d) the
+  // Kyma key is set. Failures degrade — the summary still ships and
+  // the orchestrator emits `crossReferences: []`.
+  let crossReferences: CrossReference[] = [];
+  const canCrossReference =
+    !opts.raw &&
+    body &&
+    body.wordCount > 0 &&
+    opts.tweetContext?.text &&
+    cfg.kyma.key &&
+    !errors.some((e) => e.includes('KYMA_API_KEY'));
+  if (canCrossReference) {
+    try {
+      const crxOpts: Parameters<typeof crossReferenceArticle>[0] = {
+        articleBody: body as ArticleBody,
+        tweetThesis: (opts.tweetContext as { text: string }).text,
+        urlCanonical: cacheKeyUrl,
+      };
+      if (summary) crxOpts.articleSummary = summary;
+      if (opts.synthesisModel !== undefined) crxOpts.model = opts.synthesisModel;
+      if (opts.noCache) crxOpts.noCache = true;
+      const res = await _orchestratorDeps.crossReferenceArticle(crxOpts);
+      crossReferences = res.crossReferences;
+      cost.crossReference = res.estimatedCostUsd;
+      if (!modelUsed) modelUsed = res.model;
+    } catch (err) {
+      errors.push(`cross-reference: ${String(err)}`);
+      partial = true;
+      logger.warn('article cross-reference failed', { err: String(err) });
+    }
+  }
+
   const result = finalize({
     url,
     canonicalUrl,
@@ -310,6 +347,7 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
     body: (body ?? emptyBody()) as ArticleBody,
     summary,
     keyPoints,
+    crossReferences,
     partial,
     errors,
     cost,
@@ -427,11 +465,12 @@ function finalize(args: {
   body: ArticleBody;
   summary?: string;
   keyPoints: string[];
+  crossReferences?: CrossReference[];
   partial: boolean;
   errors: string[];
   cost: ArticleCostBreakdown;
 }): ArticleSummary {
-  const estimatedCostUsd = round6(args.cost.summarize ?? 0);
+  const estimatedCostUsd = round6((args.cost.summarize ?? 0) + (args.cost.crossReference ?? 0));
   logger.debug('article cost', {
     stage: 'total',
     costUsd: estimatedCostUsd,
@@ -446,7 +485,7 @@ function finalize(args: {
     source: args.source,
     body: args.body,
     keyPoints: args.keyPoints,
-    crossReferences: [],
+    crossReferences: args.crossReferences ?? [],
     estimatedCostUsd,
     costBreakdown: args.cost,
     partial: args.partial,
