@@ -27,7 +27,7 @@ XRay aims to become the best-in-class tool for **deep research on X**, with a st
 | **0**     | Foundation                   | Thread research + basic pipeline    | In progress | Q2 2026 |
 | **1**     | Deep Conversation            | Full comment trees + analysis       | **Specced** | Q3 2026 |
 | **1.5**   | Invisible Auth Escalation    | SSR default + silent cookie inject  | **Specced** | Q3 2026 |
-| **2**     | Video Understanding          | Video analysis on X                 | Planned     | Q3 2026 |
+| **2**     | Video Understanding          | Video analysis on X                 | **Specced** | Q3 2026 |
 | **3**     | External Content             | Article & link understanding        | Planned     | Q4 2026 |
 | **4**     | Advanced Research            | Semantic search & narrative tools   | Planned     | Q4 2026 |
 | **5**     | Polish & OSS Readiness       | Hardening, docs, MCP, exports       | Planned     | Q1 2027 |
@@ -77,11 +77,15 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 - Ships together with Phase 1 as v0.2.0 (hard break from Phase 0 default behavior, documented in CHANGELOG)
 - 4 internal sub-phases (P1.5.0 SSR → P1.5.1 cookie reader → P1.5.2 escalation orchestrator → P1.5.3 auth --status)
 
-## Phase 2 — Video Understanding
-- Auto-detect & download X-hosted video
-- Intelligent frame extraction
-- Transcription + contextual understanding (Kyma)
-- Timestamped insights
+## Phase 2 — Video Understanding ([Spec](./PHASE_2_PLAN.md))
+- **Principle:** Video is a parallel-but-separate pipeline, always opt-in via `--video` flag (no surprise cost).
+- Full pipeline: download (X-native direct / yt-dlp for YouTube+TikTok+Vimeo+LinkedIn) -> audio extract (ffmpeg) -> transcribe (Kyma Whisper) -> scene-detect frame extraction (ffmpeg, threshold 0.3, min 4 / max 12 clamp) -> vision analysis (Kyma multimodal) -> synthesis (Kyma chat) -> VideoReport
+- Standalone `xray video <url>` command + `xray_video` MCP tool for direct video analysis
+- `--video` flag on `xray thread` embeds `VideoReport` into `ResearchReport`
+- No cost caps (deliberate decision) — cost surfaced via `estimatedCostUsd` field + debug logs + WARN on >10min videos
+- Video cache: SQLite for transcript + vision, 1GB LRU eviction for downloaded files
+- 4 internal sub-phases: P2.0 X-native skeleton -> P2.1 yt-dlp externals -> P2.2 caching -> P2.3 CLI+MCP+markdown
+- Ships as v0.3.0 (fully additive, no breaking changes from v0.2.0)
 
 ## Phase 3 — External Content
 - Fetch & parse linked articles
@@ -115,7 +119,7 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 |-----------|---------------------|--------------------------------------|
 | M0        | Now                 | Spec + Roadmap                       |
 | M1        | End of Phase 1 + 1.5| First usable version (v0.2.0 = P0 + P1 + P1.5 combined) |
-| M2        | End of Phase 2      | Multimodal (thread + video)          |
+| M2        | End of Phase 2      | Multimodal (thread + video) — v0.3.0 |
 | M3        | End of Phase 4      | Advanced research                    |
 | M4        | End of Phase 5      | Production-ready OSS                 |
 | M5        | Phase 6             | Public launch                        |
