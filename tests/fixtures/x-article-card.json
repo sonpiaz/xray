@@ -1,0 +1,33 @@
+{
+  "card": {
+    "name": "article",
+    "url": "https://x.com/i/article/1234567890",
+    "legacy": {
+      "binding_values": [
+        {
+          "key": "title",
+          "value": { "string_value": "How LLMs Actually Work", "type": "STRING" }
+        },
+        {
+          "key": "body_text",
+          "value": {
+            "string_value": "Large language models are transformer-based neural networks. They predict the next token in a sequence by computing self-attention over previous tokens. Training data quality matters more than raw model size — domain-specific fine-tuning yields disproportionate gains. The self-attention mechanism enables the model to weigh tokens across long contexts without recurrence. Diminishing returns past 70B parameters suggest that scaling alone is not sufficient. Mixture-of-experts architectures route tokens to specialized sub-networks for compute efficiency. Inference cost grows with sequence length; KV cache reuse keeps latency bounded.",
+            "type": "STRING"
+          }
+        },
+        {
+          "key": "author_name",
+          "value": { "string_value": "Jane Smith", "type": "STRING" }
+        },
+        {
+          "key": "created_at",
+          "value": { "string_value": "2026-05-15T14:30:00.000Z", "type": "STRING" }
+        },
+        {
+          "key": "card_url",
+          "value": { "string_value": "https://x.com/i/article/1234567890", "type": "STRING" }
+        }
+      ]
+    }
+  }
+}

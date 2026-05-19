@@ -62,6 +62,29 @@ const MIGRATIONS = [
      created_at INTEGER NOT NULL
    );`,
   'CREATE INDEX IF NOT EXISTS idx_video_files_last_accessed ON video_files(last_accessed_at);',
+  // ── P3.0 — Article caching tables ──────────────────────────────────
+  // Two URL-canonical-keyed stores. `article_bodies` caches the raw
+  // extracted body (cheap to re-fetch but pays off when re-summarizing).
+  // `article_summaries` caches the Kyma summary keyed by (URL, tweet
+  // context hash) so the same article cross-referenced against different
+  // threads (P3.2) gets its own cache entry. P3.0 only ever writes the
+  // empty-string `tweet_context_hash` (no thread context yet).
+  `CREATE TABLE IF NOT EXISTS article_bodies (
+     url_canonical TEXT PRIMARY KEY,
+     source TEXT NOT NULL,
+     body_json TEXT NOT NULL,
+     fetched_at INTEGER NOT NULL
+   );`,
+  `CREATE TABLE IF NOT EXISTS article_summaries (
+     url_canonical TEXT NOT NULL,
+     tweet_context_hash TEXT NOT NULL DEFAULT '',
+     summary_json TEXT NOT NULL,
+     model TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (url_canonical, tweet_context_hash)
+   );`,
+  'CREATE INDEX IF NOT EXISTS idx_article_bodies_fetched ON article_bodies(fetched_at);',
+  'CREATE INDEX IF NOT EXISTS idx_article_summaries_created ON article_summaries(created_at);',
 ];
 
 export function getDb(): Database {

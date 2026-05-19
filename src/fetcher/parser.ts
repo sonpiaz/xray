@@ -125,6 +125,55 @@ function parseLinks(legacy: AnyObj): XExternalLink[] {
   return out;
 }
 
+/**
+ * P3.0 — Extract X Article card binding values from a TweetDetail tweet
+ * result. X serves long-form articles as a tweet `card` payload with
+ * shape `card.legacy.binding_values: Array<{ key, value: { string_value | scribe_value | ... } }>`.
+ * The exact set of keys is unstable across X's experiments (card_url,
+ * title, body_text, article_text, author_name, created_at, etc.) — we
+ * surface whatever's present as a flat string map so the downstream
+ * `parse-x-article.ts` can defensively pick the fields it needs.
+ *
+ * Returns `undefined` when the tweet has no card, the card has no
+ * binding_values, or none of the bindings resolved to a string.
+ *
+ * Conservative — only the `string_value.string_value` and
+ * `scribe_value.value` shapes are read. Image / user / numeric binding
+ * shapes are skipped silently; P3.0 only cares about article text.
+ */
+export function parseCardBindings(tweetResult: unknown): Record<string, string> | undefined {
+  const tweet = unwrapTweetResult(tweetResult);
+  const card = obj(tweet?.card);
+  const legacy = obj(card?.legacy);
+  const bindings = arr(legacy?.binding_values) ?? arr(card?.binding_values);
+  if (!bindings) return undefined;
+  const out: Record<string, string> = {};
+  for (const b of bindings) {
+    const bo = obj(b);
+    const key = str(bo?.key);
+    if (!key) continue;
+    const value =
+      str(obj(bo?.value)?.string_value) ??
+      str(obj(bo?.value)?.scribe_key) ??
+      str(obj(bo?.value)?.url) ??
+      str(obj(bo?.string_value)?.string_value) ??
+      str(obj(bo?.scribe_value)?.value);
+    if (value) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * P3.0 — Pull the raw `card` sub-object off a TweetDetail tweet result.
+ * Used by `analyze-thread.ts` to thread the card payload into the
+ * standalone `xray article` orchestrator without re-fetching. Returns
+ * `undefined` when no card is present.
+ */
+export function extractTweetCard(tweetResult: unknown): unknown {
+  const tweet = unwrapTweetResult(tweetResult);
+  return tweet?.card;
+}
+
 function isoFromTwitterDate(s: string | undefined): string | undefined {
   if (!s) return undefined;
   const d = new Date(s);
@@ -149,6 +198,11 @@ export function parsePost(tweetResult: unknown): XPost | undefined {
   const quotedResult = unwrapTweetResult(obj(tweet.quoted_status_result)?.result);
   const quotedId = quotedResult ? str(quotedResult.rest_id) : undefined;
 
+  // P3.0 — surface the card sub-object via `raw` so downstream code can
+  // detect + parse X Article cards without a second fetch. We don't dump
+  // the entire tweet here to keep cache rows small and JSON output sane.
+  const card = tweet.card;
+
   return {
     id,
     url: `https://x.com/${author.handle}/status/${id}`,
@@ -163,6 +217,7 @@ export function parsePost(tweetResult: unknown): XPost | undefined {
     inReplyToPostId: inReplyTo,
     isQuote: Boolean(quotedId),
     quotedPostId: quotedId,
+    ...(card !== undefined ? { raw: { card } } : {}),
   };
 }
 
