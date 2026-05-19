@@ -25,7 +25,7 @@ XRay aims to become the best-in-class tool for **deep research on X**, with a st
 |-----------|-------------------------|-------------------------------------|-------------|---------|
 | Pre-Phase | Spec & Architecture     | Foundation, principles, decisions   | Complete    | -       |
 | **0**     | Foundation              | Thread research + basic pipeline    | In progress | Q2 2026 |
-| **1**     | Deep Conversation       | Full comment trees + analysis       | Planned     | Q3 2026 |
+| **1**     | Deep Conversation       | Full comment trees + analysis       | **Specced** | Q3 2026 |
 | **2**     | Video Understanding     | Video analysis on X                 | Planned     | Q3 2026 |
 | **3**     | External Content        | Article & link understanding        | Planned     | Q4 2026 |
 | **4**     | Advanced Research       | Semantic search & narrative tools   | Planned     | Q4 2026 |
@@ -58,11 +58,13 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 
 ---
 
-## Phase 1 — Deep Conversation
-- Full reply tree extraction (multi-level)
-- Comment classification + quality scoring
-- Insight extraction at thread level
-- Support for very long nested discussions
+## Phase 1 — Deep Conversation ([Spec](./PHASE_1_PLAN.md))
+- Full reply tree extraction via cursor pagination (top 50 x depth 3)
+- Comment classification: stance (6 labels) + quality (5 labels) + qualityScore (0-1 float)
+- Default shallow mode (heuristic filter + 2 Kyma calls) and deep mode (per-subtree + synthesis, ~11 calls)
+- Partial-result handling with ThreadCoverage metadata
+- Backward-compatible: existing CLI/MCP calls produce same output shape
+- Ships as v0.2.0 in one PR with 4 internal sub-phases (P1.0 pagination → P1.1 classify → P1.2 scoring → P1.3 deep mode)
 
 ## Phase 2 — Video Understanding
 - Auto-detect & download X-hosted video
