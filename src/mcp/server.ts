@@ -21,7 +21,7 @@ import { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from
 
 export { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
 
-const VERSION = '0.5.0';
+export const VERSION = '1.0.0';
 
 /**
  * P5.1 — Per-tool semantic version surfaced via the MCP `_meta` passthrough
@@ -30,8 +30,11 @@ const VERSION = '0.5.0';
  * top-level server `VERSION` so a single tool can ship a breaking change
  * (e.g. `xray_search` v2) without rev'ing the whole server. v1.0 marks the
  * tool contracts as stable per CONTRIBUTING.md breaking-change protocol.
+ *
+ * Kept as the string '1.0' (not '1.0.0') because tool versions track schema
+ * compatibility (major.minor), independent of the package's MAJOR.MINOR.PATCH.
  */
-const TOOL_VERSION = '1.0';
+export const TOOL_VERSION = '1.0';
 
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({ name: 'xray', version: VERSION });
