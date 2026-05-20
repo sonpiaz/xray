@@ -4,8 +4,9 @@ import { detectChromiumBrowsers } from '../auth/browsers.ts';
 import { type DecryptedCookie, readXCookies } from '../auth/cookie-reader.ts';
 import { putCachedThread } from '../cache/threads.ts';
 import { loadConfig } from '../core/config.ts';
-import { AuthWallError, FetchError, KeychainDeniedError } from '../core/errors.ts';
+import { AuthWallError, FetchError, KeychainDeniedError, XRateLimitError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
+import { withRetry } from '../core/retry.ts';
 import type { XPost } from '../models/post.ts';
 import type { XThread } from '../models/thread.ts';
 import { newContext, newContextWithCookies } from './browser.ts';
@@ -234,20 +235,51 @@ async function fetchWithCookiesImpl(
   cookies: DecryptedCookie[],
   opts: FetchOptions,
 ): Promise<FetchResult> {
-  const ctx = await _orchestratorDeps.newContextWithCookies(cookies);
-  try {
-    const captured = await navigateAndCapture(ctx, parsed.canonical, parsed.id, opts);
-    const detail = captured.detail;
-    if (!detail.rootPost) {
-      // Cookies were present but X still didn't deliver TweetDetail — session
-      // is dead. Distinct from a hard FetchError so the orchestrator can
-      // fall through silently.
-      throw new AuthWallError('cookie-injected fetch returned no root post');
+  // P5.1 — retry only the rate-limited path. Auth-wall (dead session) is
+  // NOT retryable; falling through to SSR is the right call there. Max
+  // 3 attempts; on exhaustion we throw `AuthWallError` so the orchestrator
+  // still falls back per Phase 1.5 logic.
+  return withRetry(
+    async () => {
+      const ctx = await _orchestratorDeps.newContextWithCookies(cookies);
+      try {
+        const captured = await navigateAndCapture(ctx, parsed.canonical, parsed.id, opts);
+        const detail = captured.detail;
+        if (!detail.rootPost) {
+          if (captured.rateLimited) {
+            // X bounced us on TweetDetail with 429 — backoff + retry inside
+            // this same browser/cookie context.
+            throw new XRateLimitError(
+              'cookie-tier fetch hit X rate limit (HTTP 429 on TweetDetail)',
+            );
+          }
+          // Cookies were present but X still didn't deliver TweetDetail — session
+          // is dead. Distinct from a hard FetchError so the orchestrator can
+          // fall through silently.
+          throw new AuthWallError('cookie-injected fetch returned no root post');
+        }
+        return buildResult(detail, captured.coverage);
+      } finally {
+        await ctx.close();
+      }
+    },
+    {
+      label: 'x-cookie',
+      // Only the rate-limited path is retryable here. Auth-wall, fetch
+      // errors, Playwright launch failures all surface immediately.
+      isRetryable: (err) => err instanceof XRateLimitError,
+    },
+  ).catch((err) => {
+    // After retry exhaustion we still want the orchestrator to fall back
+    // to SSR rather than surface a hard rate-limit error to the user, so
+    // remap to AuthWallError per Phase 1.5 escalation logic.
+    if (err instanceof XRateLimitError) {
+      throw new AuthWallError(`cookie-tier rate-limited after retries: ${err.message}`, {
+        cause: err,
+      });
     }
-    return buildResult(detail, captured.coverage);
-  } finally {
-    await ctx.close();
-  }
+    throw err;
+  });
 }
 
 /**
@@ -313,6 +345,8 @@ function dedupePosts(posts: XPost[]): XPost[] {
 type CapturedDetail = {
   detail: ParsedDetail;
   coverage?: WalkCoverage;
+  /** P5.1 — true when any TweetDetail GraphQL response returned HTTP 429. */
+  rateLimited?: boolean;
 };
 
 async function navigateAndCapture(
@@ -334,6 +368,10 @@ async function navigateAndCapture(
   // Capture the very first TweetDetail request so pagination can replay it.
   let pagCtx: PaginationContext | undefined;
   let lastCursors: ExtractedCursors = { showMore: [] };
+  // P5.1 — flagged when X returns 429 on a TweetDetail response. Surfaced
+  // to the cookie-tier wrapper so it can back off + retry rather than
+  // falling straight through to SSR on a transient rate limit.
+  let rateLimited = false;
 
   const onRequest = (req: Request) => {
     const u = req.url();
@@ -347,6 +385,11 @@ async function navigateAndCapture(
   const onResponse = async (res: Response) => {
     const u = res.url();
     if (!u.includes('/graphql/') || !u.includes('TweetDetail')) return;
+    if (res.status() === 429) {
+      rateLimited = true;
+      logger.debug('graphql 429 on TweetDetail', { url: u });
+      return;
+    }
     try {
       const json = (await res.json()) as unknown;
       const parsed = parseTweetDetail(json, rootId);
@@ -394,7 +437,11 @@ async function navigateAndCapture(
     await page.close();
   }
 
-  return { detail: aggregate, ...(coverage ? { coverage } : {}) };
+  return {
+    detail: aggregate,
+    ...(coverage ? { coverage } : {}),
+    ...(rateLimited ? { rateLimited: true } : {}),
+  };
 }
 
 async function waitForRoot(

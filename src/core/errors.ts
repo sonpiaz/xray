@@ -28,14 +28,21 @@ export class AuthRequiredError extends XRayError {
 
 export class KymaError extends XRayError {
   readonly status?: number;
+  /**
+   * P5.1 — Raw value of the upstream `Retry-After` header, when present.
+   * Parsed by `parseRetryAfter()` inside the retry hook so cross-cutting
+   * code doesn't need to know about HTTP-date vs seconds.
+   */
+  readonly retryAfter?: string;
 
   constructor(
     message: string,
-    opts: { status?: number; transient?: boolean; cause?: unknown } = {},
+    opts: { status?: number; transient?: boolean; cause?: unknown; retryAfter?: string } = {},
   ) {
     super('KYMA_ERROR', message, opts);
     this.name = 'KymaError';
     if (opts.status !== undefined) this.status = opts.status;
+    if (opts.retryAfter !== undefined) this.retryAfter = opts.retryAfter;
   }
 }
 
@@ -85,6 +92,19 @@ export class AuthWallError extends XRayError {
   constructor(message: string, opts: { cause?: unknown } = {}) {
     super('AUTH_WALL', message, opts);
     this.name = 'AuthWallError';
+  }
+}
+
+/**
+ * P5.1 — Raised by the cookie-tier capture loop when X returns HTTP 429
+ * on a TweetDetail response. Distinct from `AuthWallError` so the retry
+ * wrapper around the cookie tier can pattern-match this exact failure
+ * mode and back off (auth-wall = dead session, not a rate limit).
+ */
+export class XRateLimitError extends XRayError {
+  constructor(message: string, opts: { cause?: unknown } = {}) {
+    super('X_RATE_LIMIT', message, { transient: true, ...opts });
+    this.name = 'XRateLimitError';
   }
 }
 

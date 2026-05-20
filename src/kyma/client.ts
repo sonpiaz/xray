@@ -3,6 +3,7 @@ import { getCachedKyma, hashPrompt, putCachedKyma } from '../cache/kyma.ts';
 import { loadConfig } from '../core/config.ts';
 import { KymaError } from '../core/errors.ts';
 import { logger } from '../core/logger.ts';
+import { parseRetryAfter, withRetry } from '../core/retry.ts';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -55,30 +56,47 @@ export async function chat(opts: ChatOptions): Promise<ChatResult> {
   const url = `${cfg.kyma.url.replace(/\/$/, '')}/chat/completions`;
   logger.debug('kyma request', { url, model, messageCount: opts.messages.length });
 
-  let res: Awaited<ReturnType<typeof request>>;
-  try {
-    res = await request(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${cfg.kyma.key}`,
+  // P5.1 — retry transient failures (HTTP 429, 5xx, network errors). Sits
+  // BELOW the cache check above so cached hits never trigger retries.
+  // Retry-After is parsed from the response when the server provides it.
+  const text = await withRetry(
+    async () => {
+      let res: Awaited<ReturnType<typeof request>>;
+      try {
+        res = await request(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${cfg.kyma.key}`,
+          },
+          body: JSON.stringify(body),
+          bodyTimeout: 120_000,
+          headersTimeout: 30_000,
+        });
+      } catch (err) {
+        throw new KymaError('Kyma request failed (network).', { transient: true, cause: err });
+      }
+
+      const responseText = await res.body.text();
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        const retryAfter = res.headers['retry-after'];
+        const retryAfterStr = Array.isArray(retryAfter) ? retryAfter[0] : retryAfter;
+        throw new KymaError(`Kyma returned ${res.statusCode}: ${responseText.slice(0, 500)}`, {
+          status: res.statusCode,
+          transient: res.statusCode >= 500 || res.statusCode === 429,
+          retryAfter: retryAfterStr,
+        });
+      }
+      return responseText;
+    },
+    {
+      label: 'kyma',
+      retryAfterMs: (err) => {
+        if (err instanceof KymaError) return parseRetryAfter(err.retryAfter);
+        return undefined;
       },
-      body: JSON.stringify(body),
-      bodyTimeout: 120_000,
-      headersTimeout: 30_000,
-    });
-  } catch (err) {
-    throw new KymaError('Kyma request failed (network).', { transient: true, cause: err });
-  }
-
-  const text = await res.body.text();
-
-  if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw new KymaError(`Kyma returned ${res.statusCode}: ${text.slice(0, 500)}`, {
-      status: res.statusCode,
-      transient: res.statusCode >= 500 || res.statusCode === 429,
-    });
-  }
+    },
+  );
 
   let parsed: ChatCompletionResponse;
   try {
