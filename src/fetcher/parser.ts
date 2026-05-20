@@ -6,7 +6,7 @@ import type { XMedia } from '../models/media.ts';
  * Parser for X's TweetDetail GraphQL response shape.
  * The structure is unstable; we defensively pull the fields we know and ignore the rest.
  */
-import type { XAuthor, XPost, XPostMetrics } from '../models/post.ts';
+import type { XArticleCard, XAuthor, XPost, XPostMetrics } from '../models/post.ts';
 
 type AnyObj = Record<string, unknown>;
 const obj = (v: unknown): AnyObj | undefined =>
@@ -174,6 +174,58 @@ export function extractTweetCard(tweetResult: unknown): unknown {
   return tweet?.card;
 }
 
+/**
+ * v1.0.1 — Lift the `tweet.card` payload into a structured `XArticleCard`
+ * suitable for the typed `XPost.card` field. Distinct from
+ * `parseCardBindings` (returns a flat `Record<string, string>`) and
+ * `parseXArticle` (returns a typed `ArticleBody`); this helper sits in
+ * between, exposing just the fields the article-candidate collector and
+ * orchestrator need without burning a Kyma call.
+ *
+ * Returns `undefined` when:
+ *   - the tweet has no `card`,
+ *   - the card has no resolvable URL (we can't dedupe / route without one),
+ *   - or `parseCardBindings` returned nothing.
+ *
+ * Defensive throughout — never throws on shape variance. Unknown binding
+ * shapes are ignored; missing fields become `undefined`.
+ *
+ * URL precedence (highest first):
+ *   1. `card.url` (top-level — X Articles always set this)
+ *   2. `binding_values[card_url].string_value`
+ *   3. `binding_values[url].string_value`
+ *   4. `binding_values[article_url].string_value`
+ */
+export function parseTweetCard(tweetResult: unknown): XArticleCard | undefined {
+  const tweet = unwrapTweetResult(tweetResult);
+  const card = obj(tweet?.card);
+  if (!card) return undefined;
+
+  const bindings = parseCardBindings(tweetResult) ?? {};
+  const cardUrl = str(card.url) ?? bindings.card_url ?? bindings.url ?? bindings.article_url;
+  if (!cardUrl) return undefined;
+
+  const title = bindings.title ?? bindings.card_title ?? bindings.article_title;
+  const byline = bindings.author_name ?? bindings.author ?? bindings.byline;
+  const publishedAt = bindings.published_at ?? bindings.created_at ?? bindings.date_published;
+  // Body text only ships on X Articles — summary_large_image / video cards
+  // leave it unset. We probe the documented X Article keys + a few common
+  // fallbacks. Description / summary are intentionally last (preview-only).
+  const bodyText =
+    bindings.body_text ??
+    bindings.article_text ??
+    bindings.article_content ??
+    bindings.content ??
+    bindings.body;
+
+  const out: XArticleCard = { url: cardUrl, raw: bindings };
+  if (title) out.title = title;
+  if (byline) out.byline = byline;
+  if (publishedAt) out.publishedAt = publishedAt;
+  if (bodyText) out.bodyText = bodyText;
+  return out;
+}
+
 function isoFromTwitterDate(s: string | undefined): string | undefined {
   if (!s) return undefined;
   const d = new Date(s);
@@ -198,10 +250,16 @@ export function parsePost(tweetResult: unknown): XPost | undefined {
   const quotedResult = unwrapTweetResult(obj(tweet.quoted_status_result)?.result);
   const quotedId = quotedResult ? str(quotedResult.rest_id) : undefined;
 
-  // P3.0 — surface the card sub-object via `raw` so downstream code can
-  // detect + parse X Article cards without a second fetch. We don't dump
-  // the entire tweet here to keep cache rows small and JSON output sane.
-  const card = tweet.card;
+  // P3.0 / v1.0.1 — surface the card sub-object via TWO channels:
+  //   1. `XPost.card` (v1.0.1, structured) — the typed shape downstream
+  //      code (analyze-thread, article orchestrator) reads to detect
+  //      X Articles + skip refetch. Populated via `parseTweetCard`.
+  //   2. `XPost.raw.card` (P3.0, raw) — kept for backward compat with
+  //      any v1.0.0-era cache rows + the standalone `xray article` path
+  //      that hands the raw card to `parseXArticle`. Cheap to keep
+  //      (re-uses the same object reference).
+  const rawCard = tweet.card;
+  const structuredCard = parseTweetCard(tweetResult);
 
   return {
     id,
@@ -217,7 +275,8 @@ export function parsePost(tweetResult: unknown): XPost | undefined {
     inReplyToPostId: inReplyTo,
     isQuote: Boolean(quotedId),
     quotedPostId: quotedId,
-    ...(card !== undefined ? { raw: { card } } : {}),
+    ...(structuredCard !== undefined ? { card: structuredCard } : {}),
+    ...(rawCard !== undefined ? { raw: { card: rawCard } } : {}),
   };
 }
 

@@ -174,51 +174,60 @@ export async function analyzeArticle(opts: ArticleAnalyzeOptions): Promise<Artic
 
   if (!body) {
     if (source === 'x-article') {
-      // ── X Article path (P3.0) ──────────────────────────────────────
-      let cardPayload: unknown = opts.cardData;
-      if (cardPayload === undefined) {
-        // Standalone path — we need the card. The X Article URL is anchored
-        // under a tweet; let the existing thread fetcher walk the page and
-        // hand us back the tweet's `raw.card` payload via the parser.
-        try {
-          cardPayload = await fetchCardForArticleUrl(url);
-        } catch (err) {
-          // Hard failure — no card means no body. Surface as a partial
-          // result so the caller still gets a schema-valid object.
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`fetch card: ${msg}`);
-          return finalize({
-            url,
-            canonicalUrl,
-            source,
-            body: emptyBody(),
-            summary: undefined,
-            keyPoints: [],
-            partial: true,
-            errors,
-            cost,
-          });
+      // ── X Article path (P3.0 / v1.0.1) ─────────────────────────────
+      //
+      // Fast path: caller handed us a v1.0.1 structured `XArticleCard`
+      // with `bodyText` already extracted. Build the ArticleBody
+      // directly — no card payload re-parse, no network fetch.
+      const structured = extractStructuredCardBody(opts.cardData);
+      if (structured) {
+        body = structured;
+      } else {
+        let cardPayload: unknown = opts.cardData;
+        if (cardPayload === undefined) {
+          // Standalone path — we need the card. The X Article URL is anchored
+          // under a tweet; let the existing thread fetcher walk the page and
+          // hand us back the tweet's `raw.card` payload via the parser.
+          try {
+            cardPayload = await fetchCardForArticleUrl(url);
+          } catch (err) {
+            // Hard failure — no card means no body. Surface as a partial
+            // result so the caller still gets a schema-valid object.
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`fetch card: ${msg}`);
+            return finalize({
+              url,
+              canonicalUrl,
+              source,
+              body: emptyBody(),
+              summary: undefined,
+              keyPoints: [],
+              partial: true,
+              errors,
+              cost,
+            });
+          }
         }
-      }
 
-      try {
-        body = _orchestratorDeps.parseXArticle(cardPayload);
-      } catch (err) {
-        if (err instanceof ArticleParseError) {
-          errors.push(`parse: ${err.message}`);
-          return finalize({
-            url,
-            canonicalUrl,
-            source,
-            body: emptyBody(),
-            summary: undefined,
-            keyPoints: [],
-            partial: true,
-            errors,
-            cost,
-          });
+        try {
+          body = _orchestratorDeps.parseXArticle(cardPayload);
+        } catch (err) {
+          if (err instanceof ArticleParseError) {
+            errors.push(`parse: ${err.message}`);
+            return finalize({
+              url,
+              canonicalUrl,
+              source,
+              body: emptyBody(),
+              summary: undefined,
+              keyPoints: [],
+              partial: true,
+              errors,
+              cost,
+            });
+          }
+          throw err;
         }
-        throw err;
       }
     } else {
       // ── External HTML path (P3.1) ──────────────────────────────────
@@ -389,6 +398,53 @@ function emptyBody(): ArticleBody {
     wordCount: 0,
     contentSource: 'x-article-card',
   };
+}
+
+/**
+ * v1.0.1 — Fast-path body extractor for the v1.0.1 structured
+ * `XArticleCard` shape. When `analyze-thread.ts` collects an article
+ * candidate from `XPost.card` it passes the parsed card object in
+ * directly; if `bodyText` is present we can skip `parseXArticle` (which
+ * would re-walk `binding_values`) AND skip the standalone Playwright
+ * round-trip. Returns undefined when the input isn't the structured
+ * shape OR `bodyText` is missing — the caller then falls back to the
+ * raw-card / re-fetch path.
+ */
+function extractStructuredCardBody(cardData: unknown): ArticleBody | undefined {
+  if (!cardData || typeof cardData !== 'object' || Array.isArray(cardData)) {
+    return undefined;
+  }
+  const co = cardData as Record<string, unknown>;
+  // The structured XArticleCard always has a string `url`. Raw GraphQL
+  // card payloads have `url` too but also `legacy.binding_values`, so
+  // we additionally check for the absence of `legacy` to avoid mis-
+  // identifying a raw card as structured.
+  if (typeof co.url !== 'string') return undefined;
+  if ('legacy' in co) return undefined;
+  const bodyText = co.bodyText;
+  if (typeof bodyText !== 'string' || bodyText.trim().length === 0) return undefined;
+  const title = typeof co.title === 'string' ? co.title : 'Untitled';
+  const byline = typeof co.byline === 'string' ? co.byline : undefined;
+  const publishedAt = typeof co.publishedAt === 'string' ? co.publishedAt : undefined;
+  // Mirror parse-x-article.ts sanitisation — strip stray HTML, collapse
+  // whitespace. Cheap; defensive against future X shape drift.
+  const text = bodyText
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length === 0) return undefined;
+  const body: ArticleBody = {
+    title,
+    wordCount: text.split(/\s+/).filter(Boolean).length,
+    text,
+    contentSource: 'x-article-card',
+  };
+  if (byline) body.byline = byline;
+  if (publishedAt) {
+    const d = new Date(publishedAt);
+    if (!Number.isNaN(d.getTime())) body.publishedAt = d.toISOString();
+  }
+  return body;
 }
 
 function emptyExternalBody(): ArticleBody {

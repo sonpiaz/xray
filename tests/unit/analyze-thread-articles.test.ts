@@ -26,7 +26,7 @@ import {
   collectArticleCandidates,
 } from '../../src/intelligence/analyze-thread.ts';
 import type { XExternalLink } from '../../src/models/link.ts';
-import type { XPost } from '../../src/models/post.ts';
+import type { XArticleCard, XPost } from '../../src/models/post.ts';
 import type { XThread } from '../../src/models/thread.ts';
 
 const FETCHED_AT = '2026-05-19T12:00:00.000Z';
@@ -37,7 +37,12 @@ function link(url: string, expanded?: string): XExternalLink {
 
 function post(
   id: string,
-  opts: { text?: string; links?: XExternalLink[]; raw?: unknown } = {},
+  opts: {
+    text?: string;
+    links?: XExternalLink[];
+    raw?: unknown;
+    card?: XArticleCard;
+  } = {},
 ): XPost {
   return {
     id,
@@ -49,6 +54,7 @@ function post(
     links: opts.links ?? [],
     isReply: false,
     isQuote: false,
+    ...(opts.card !== undefined ? { card: opts.card } : {}),
     ...(opts.raw !== undefined ? { raw: opts.raw } : {}),
   };
 }
@@ -153,6 +159,59 @@ describe('collectArticleCandidates', () => {
       links: [link('https://should-not-appear.com/post')],
     });
     expect(collectArticleCandidates(t)).toEqual([]);
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // v1.0.1 — Channel 2: structured XPost.card
+  // ──────────────────────────────────────────────────────────────────
+
+  it('extracts X Article candidate from structured XPost.card', () => {
+    const card: XArticleCard = {
+      url: 'https://x.com/i/article/777',
+      title: 'Headline',
+      bodyText: 'Body text already extracted by parser.',
+    };
+    const root = post('1', { card });
+    const out = collectArticleCandidates(thread(root));
+    expect(out).toHaveLength(1);
+    expect(out[0]?.url).toBe('https://x.com/i/article/777');
+    expect(out[0]?.source).toBe('x-article');
+    expect(out[0]?.cardData).toBe(card);
+  });
+
+  it('scans authorPosts for structured cards (v1.0.0 only scanned rootPost)', () => {
+    const card: XArticleCard = {
+      url: 'https://x.com/i/article/888',
+      bodyText: 'Article body packed into a 2/N follow-up.',
+    };
+    const follow = post('2', { card });
+    const out = collectArticleCandidates(thread(post('1'), [follow]));
+    expect(out).toHaveLength(1);
+    expect(out[0]?.url).toBe('https://x.com/i/article/888');
+    expect(out[0]?.cardData).toBe(card);
+  });
+
+  it('classifies external-html cards (e.g. summary_large_image) as external-html', () => {
+    const card: XArticleCard = {
+      url: 'https://substack.example.com/p/external-article',
+      title: 'External blog',
+    };
+    const root = post('1', { card });
+    const out = collectArticleCandidates(thread(root));
+    expect(out).toHaveLength(1);
+    expect(out[0]?.url).toBe('https://substack.example.com/p/external-article');
+    expect(out[0]?.source).toBe('external-html');
+  });
+
+  it('deduplicates structured card against a matching links entry', () => {
+    const url = 'https://x.com/i/article/9999';
+    const card: XArticleCard = { url, bodyText: 'cached body' };
+    const root = post('1', { links: [link(url)], card });
+    const out = collectArticleCandidates(thread(root));
+    expect(out).toHaveLength(1);
+    // The card payload should land on the unified entry so the
+    // orchestrator can skip the network fetch.
+    expect(out[0]?.cardData).toBe(card);
   });
 });
 

@@ -310,18 +310,26 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
 }
 
 /**
- * P3.2 — Collect article candidates from rootPost + authorPosts.
+ * P3.2 / v1.0.1 — Collect article candidates from rootPost + authorPosts.
  *
- * Two channels:
- *   1. `post.links[]` (already populated by parser) — any HTTP(S) URL
- *      that classifies as an article (external-html or x-article).
- *   2. The root post's raw card payload — if X served the tweet with
- *      an Article card attached, harvest it without re-fetching.
+ * Three channels (deduped by URL):
+ *   1. `post.links[]` — any HTTP(S) URL that classifies as an article
+ *      (external-html or x-article).
+ *   2. `post.card` — v1.0.1 structured X card field. When `card.url`
+ *      points at an X Article (`/i/article/<id>`) the orchestrator can
+ *      skip the network round-trip and re-use the in-flight body text.
+ *   3. `post.raw.card` — v1.0.0 fallback for cache rows + tests that
+ *      stashed the card under `raw.card` before v1.0.1 promoted it to a
+ *      typed field.
  *
  * Comments are intentionally NOT scanned (a busy thread can expose
  * 50+ external links and burn $1+ in a single call). De-duplicates by
  * the post's `expandedUrl` (preferred) or `url` field. Cap downstream
  * via MAX_ARTICLES_PER_THREAD.
+ *
+ * v1.0.1 expands scanning to BOTH rootPost AND authorPosts for the card
+ * channels (v1.0.0 only scanned rootPost.raw). Threads where an article
+ * is dropped in a 2/N or 3/N follow-up no longer disappear.
  *
  * Exported for unit tests.
  */
@@ -350,30 +358,61 @@ export function collectArticleCandidates(thread: XThread): ArticleCandidate[] {
     }
   }
 
-  // Channel 2 — X Article card on root post raw payload.
-  const rootRaw = thread.rootPost.raw;
-  if (rootRaw && typeof rootRaw === 'object' && !Array.isArray(rootRaw) && 'card' in rootRaw) {
-    const card = (rootRaw as { card?: unknown }).card;
-    if (card && typeof card === 'object' && !Array.isArray(card)) {
-      // Pull the card URL (article identity) so we can dedup against
-      // Channel 1 hits and use it as the article URL.
-      const cardUrl = extractCardUrl(card);
-      if (cardUrl) {
-        if (!seen.has(cardUrl)) {
-          seen.add(cardUrl);
-          out.push({ url: cardUrl, source: 'x-article', cardData: card });
-        } else {
-          // We already saw this URL via the links channel — upgrade the
-          // existing entry with the card payload so the orchestrator
-          // skips the network round-trip.
-          const existing = out.find((c) => c.url === cardUrl);
-          if (existing && existing.cardData === undefined) existing.cardData = card;
-        }
-      }
+  // Channel 2 — v1.0.1 structured `XPost.card` (root + author posts).
+  // We probe both rootPost AND authorPosts so an article dropped in a
+  // 2/N follow-up isn't missed. The card payload carries enough info
+  // (URL + optional bodyText) to skip the article-fetch round-trip.
+  for (const p of posts) {
+    const card = p.card;
+    if (!card?.url) continue;
+    const src = detectArticleSource(card.url);
+    // Card may be a non-article (summary_large_image, video_app, etc.).
+    // Honour the detector — only enqueue when the URL classifies.
+    if (src !== 'x-article' && src !== 'external-html') continue;
+    if (seen.has(card.url)) {
+      // Upgrade the existing entry with the card payload so the
+      // orchestrator can re-use any pre-extracted body text.
+      const existing = out.find((c) => c.url === card.url);
+      if (existing && existing.cardData === undefined) existing.cardData = card;
+      continue;
     }
+    seen.add(card.url);
+    out.push({ url: card.url, source: src, cardData: card });
+  }
+
+  // Channel 3 — v1.0.0 backward-compat: raw card under `XPost.raw.card`.
+  // Older cache rows (and tests written before v1.0.1) stash the card
+  // shape here instead of in `XPost.card`. We walk both root + author
+  // posts (v1.0.0 only walked root) so we don't silently regress.
+  for (const p of posts) {
+    const rawCard = extractRawCardLegacy(p);
+    if (!rawCard) continue;
+    const cardUrl = extractCardUrl(rawCard);
+    if (!cardUrl) continue;
+    if (seen.has(cardUrl)) {
+      const existing = out.find((c) => c.url === cardUrl);
+      if (existing && existing.cardData === undefined) existing.cardData = rawCard;
+      continue;
+    }
+    seen.add(cardUrl);
+    out.push({ url: cardUrl, source: 'x-article', cardData: rawCard });
   }
 
   return out;
+}
+
+/**
+ * v1.0.1 — Walk a post's raw payload looking for the v1.0.0-era `card`
+ * sub-object. Returns undefined when the post has no raw, no card, or
+ * a non-object card payload.
+ */
+function extractRawCardLegacy(post: XPost): unknown {
+  const raw = post.raw;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  if (!('card' in raw)) return undefined;
+  const card = (raw as { card?: unknown }).card;
+  if (!card || typeof card !== 'object' || Array.isArray(card)) return undefined;
+  return card;
 }
 
 /**

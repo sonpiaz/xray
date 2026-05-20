@@ -989,4 +989,88 @@ describe('analyzeArticle orchestrator', () => {
       }
     });
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // v1.0.1 — structured XArticleCard fast path
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('analyzeArticle — structured XArticleCard fast path (v1.0.1)', () => {
+    it('skips parseXArticle when cardData has bodyText already extracted', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        // Spy on parseXArticle — the structured fast path must not call it.
+        const parseSpy = vi.fn(() => {
+          throw new Error('parseXArticle should NOT run on structured cardData');
+        });
+        patch('parseXArticle', parseSpy as unknown as typeof articleDeps.parseXArticle);
+        const summarizeSpy = vi.fn(async () => ({
+          summary: 'Pre-extracted body summary.',
+          keyPoints: ['p1', 'p2'],
+          wordCount: 20,
+          estimatedCostUsd: 0.001,
+          cached: false,
+          model: 'gemini-2.5-flash',
+        }));
+        patch('summarizeArticle', summarizeSpy as unknown as typeof articleDeps.summarizeArticle);
+
+        const structured = {
+          url,
+          title: 'Pre-Extracted Title',
+          bodyText: 'Article body that the parser already pulled out of binding_values.',
+          byline: 'Test Author',
+          publishedAt: '2026-05-19T00:00:00.000Z',
+        };
+        const result = await analyzeArticle({
+          url,
+          cardData: structured,
+          noCache: true,
+        });
+        expect(parseSpy).not.toHaveBeenCalled();
+        expect(result.body.title).toBe('Pre-Extracted Title');
+        expect(result.body.text).toContain('Article body that the parser');
+        expect(result.body.byline).toBe('Test Author');
+        expect(result.body.publishedAt).toBe('2026-05-19T00:00:00.000Z');
+        expect(result.body.wordCount).toBeGreaterThan(0);
+        expect(result.summary).toBe('Pre-extracted body summary.');
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+
+    it('falls through to parseXArticle when cardData is the raw card shape (no bodyText)', async () => {
+      const origKey = process.env.KYMA_API_KEY;
+      process.env.KYMA_API_KEY = 'test-key';
+      resetConfigForTests();
+      try {
+        const summarizeSpy = vi.fn(async () => ({
+          summary: 'Summary from parseXArticle path.',
+          keyPoints: [],
+          wordCount: 50,
+          estimatedCostUsd: 0.001,
+          cached: false,
+          model: 'gemini-2.5-flash',
+        }));
+        patch('summarizeArticle', summarizeSpy as unknown as typeof articleDeps.summarizeArticle);
+        // Passing the raw card (with `legacy.binding_values`) — fast path
+        // must skip + the standard parseXArticle path must run.
+        const result = await analyzeArticle({
+          url,
+          cardData: fixture,
+          noCache: true,
+        });
+        expect(result.body.title).toBe('How LLMs Actually Work');
+        expect(result.summary).toBe('Summary from parseXArticle path.');
+      } finally {
+        // biome-ignore lint/performance/noDelete: env var unset != "undefined"
+        if (origKey === undefined) delete process.env.KYMA_API_KEY;
+        else process.env.KYMA_API_KEY = origKey;
+        resetConfigForTests();
+      }
+    });
+  });
 });
