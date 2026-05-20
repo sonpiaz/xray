@@ -4,6 +4,74 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-05-19
+
+**XRay v1.0 — first public release.**
+
+This is the launch tag. XRay ships ready for production agent + human use, with full documentation, hardening, and community files. v1.0 is built in a single arc on top of the work shipped in v0.0.1 → v0.5.0; the entry below summarises everything that's in the release rather than only the P5-incremental delta.
+
+### Phases included in v1.0
+
+- **Phase 0** (`v0.0.1`) — scaffold, CLI, MCP server, SQLite cache.
+- **Phase 1** (`v0.2.0`) — deep conversation: pagination, nested replies, stance/quality classification, deep mode. Default fetch became invisible-auth (breaking-change tracked in v0.2.0 entry).
+- **Phase 1.5** (`v0.2.0`) — invisible 3-tier auth escalation (cookie → SSR → saved).
+- **Phase 1.6** (`v0.2.1`, `v0.2.2`) — self-thread reconstruction + author-priority pagination.
+- **Phase 2** (`v0.3.0`, `v0.3.1`) — video understanding (X-native + YouTube + TikTok + Vimeo + LinkedIn).
+- **Phase 3** (`v0.4.0`) — external articles + cross-reference attribution.
+- **Phase 4** (`v0.5.0`, partial) — semantic search + profile analysis (narrative + batch deferred to Phase 7).
+- **Phase 5** (`v1.0.0`) — polish: docs rewrite, CONTRIBUTING, CoC, issue/PR templates, retry + warmup + MCP versioning, version bump.
+
+### v1.0 stability commitments
+
+- CLI flags + MCP tool schemas are stable. Breaking changes bump MAJOR per [`CONTRIBUTING.md`](./CONTRIBUTING.md) `## Breaking-change protocol`.
+- All 5 MCP tools ship with `_meta: { version: "1.0" }`. **Per-tool version is independent of project semver** — it tracks tool schema compatibility (major.minor) and bumps only when an MCP tool's input/output shape changes. The package semver (`1.0.0`) tracks the CLI + package + cache shape.
+- `xray thread <url>` default behavior is locked: cookie tier → SSR fallback → saved auth.
+- Version-constant lockstep guarded by `tests/unit/version.test.ts` — future bumps must touch `package.json`, `src/cli/index.ts`, and `src/mcp/server.ts` together or the suite fails.
+
+### Added (P5-specific delta from v0.5.0)
+
+- **`xray warmup` command** — preheat the MiniLM embedding model + Playwright Chromium + SQLite so the first real `xray thread` doesn't pay cold-start tax in front of the user. `--json` for machine-readable output. Each step is best-effort: a downstream failure doesn't mask upstream success.
+- **Rate-limit retry with exponential backoff + jitter** — new `src/core/retry.ts` shared utility wraps the Kyma API client and the X cookie-tier Playwright fetch. Retries on HTTP 429, 5xx, network timeouts, and empty-body rate-limit responses. Respects `Retry-After`. Surfaces clean user-facing errors after the final attempt — no stack traces for expected failures.
+- **MCP `_meta.version: "1.0"`** stamped on all 5 tool registrations (`xray_thread`, `xray_video`, `xray_article`, `xray_search`, `xray_profile`). Callers can read `_meta.version` from `tools/list` for stable contract negotiation. Format documented in `CONTRIBUTING.md`.
+- **CONTRIBUTING.md** — dev setup, test/lint commands, commit convention, PR process, breaking-change protocol, MCP tool versioning, release process.
+- **CODE_OF_CONDUCT.md** — short project-specific covenant with positive framing.
+- **GitHub issue templates** — `.github/ISSUE_TEMPLATE/{bug,feature,security}.md`. Security report routes to private email.
+- **GitHub PR template** — `.github/PULL_REQUEST_TEMPLATE.md` with breaking-change + CHANGELOG checkboxes.
+- **README rewrite** for v1.0 launch — tagline, install, 5-command quickstart, MCP setup snippet, architecture overview, contributing link. Pinned at ~165 lines (under the 400-line cap from the Phase 5 spec).
+- **Demo assets** — `docs/demo.tape` (VHS source for the launch GIF), `docs/demo.sh` (asciinema-compatible script), `docs/DEMO.md` (plain-text walkthrough with real sample outputs). README links to the static walkthrough until the animated cast is rendered + uploaded.
+- **`tests/unit/version.test.ts`** — guards that `package.json`, `src/cli/index.ts` VERSION, and `src/mcp/server.ts` VERSION never drift; asserts per-tool `TOOL_VERSION` stays in major.minor form (decoupled).
+
+### Changed (P5-specific delta from v0.5.0)
+
+- Version bumped to `1.0.0` across `package.json`, `src/cli/index.ts`, `src/mcp/server.ts`, and the `xray profile` markdown footer (`src/render/profile-markdown.ts`).
+- `VERSION` constants in `src/cli/index.ts` and `src/mcp/server.ts` are now `export const` so the alignment test can read them; `TOOL_VERSION` likewise exported.
+- README test-count badge bumped 669 → 702 (live count 703 incl. the new version guards).
+- README "Phases shipped" paragraph rewritten — v1.0.0 now covers all five phases instead of "Phase 5 in progress".
+
+### Test count
+
+**703** unit tests passing across 44 test files (699 carried in from v0.5.0 + 4 new version-alignment guards). Live integration verified against real X content (cookie tier, video pipeline on the Anatoli Kopadze "Claude Code" talk, semantic search).
+
+### Dependencies summary (final v1.0 baseline)
+
+- **Runtime:** [Bun](https://bun.sh) ≥ 1.1, TypeScript.
+- **Fetch:** [Playwright](https://playwright.dev) (Chromium), [undici](https://github.com/nodejs/undici), [cheerio](https://cheerio.js.org/).
+- **Storage:** `bun:sqlite` + [sqlite-vec](https://github.com/asg017/sqlite-vec) (optional; pure-JS cosine fallback when extension can't load).
+- **LLM:** [Kyma API](https://kymaapi.com) (chat + multimodal + Whisper audio).
+- **Embeddings:** [@xenova/transformers](https://github.com/xenova/transformers.js) (local MiniLM-L6-v2, ~23 MB int8).
+- **Article extraction:** [@mozilla/readability](https://github.com/mozilla/readability) + [linkedom](https://github.com/WebReflection/linkedom).
+- **Video (optional):** [ffmpeg](https://ffmpeg.org/) (audio + frames), [yt-dlp](https://github.com/yt-dlp/yt-dlp) (external platforms).
+- **MCP:** [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk).
+
+### Known deferred work
+
+- **Phase 7**: narrative / controversy tracking, batch research (`xray batch`), `--fresh N` profile fetching (real X timeline fetcher), comparison mode (A vs B). See [`docs/ROADMAP.md`](./docs/ROADMAP.md).
+- **Phase 6**: launch ceremony — ProductHunt / HackerNews / Reddit announcement, optional brew tap formula, optional npm publish. Separate from this code release.
+
+### Acknowledgements
+
+Built in a tight 2-day sprint (2026-05-18 → 2026-05-19) via heavy use of Claude agents (executor / planner / explore) under the orchestration of [oh-my-claudecode](https://github.com/sonpiaz/oh-my-claudecode). Spec-first workflow plus tight feedback loops between human + agent.
+
 ## [0.5.0] — 2026-05-19
 
 ### Added
