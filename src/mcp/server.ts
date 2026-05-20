@@ -23,6 +23,16 @@ export { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from
 
 const VERSION = '0.5.0';
 
+/**
+ * P5.1 — Per-tool semantic version surfaced via the MCP `_meta` passthrough
+ * channel. Stamped on every `registerTool()` config so a `tools/list` JSON-
+ * RPC response exposes `_meta.version` to MCP clients. Independent of the
+ * top-level server `VERSION` so a single tool can ship a breaking change
+ * (e.g. `xray_search` v2) without rev'ing the whole server. v1.0 marks the
+ * tool contracts as stable per CONTRIBUTING.md breaking-change protocol.
+ */
+const TOOL_VERSION = '1.0';
+
 export async function startMcpServer(): Promise<void> {
   const server = new McpServer({ name: 'xray', version: VERSION });
 
@@ -33,6 +43,7 @@ export async function startMcpServer(): Promise<void> {
       description:
         'Fetch and analyze an X (Twitter) thread end-to-end. Returns a structured ResearchReport with TL;DR, summary, key insights, notable replies, and the raw thread. Uses local SQLite cache + Kyma API.',
       inputSchema: ThreadInput,
+      _meta: { version: TOOL_VERSION },
     },
     async (args) => {
       try {
@@ -86,6 +97,7 @@ export async function startMcpServer(): Promise<void> {
       description:
         'Download a video (X-native, YouTube, TikTok, Vimeo, LinkedIn), transcribe its audio, run vision on scene-detect frames, and synthesize a structured VideoReport. Cost surfaced via `estimatedCostUsd`.',
       inputSchema: VideoInput,
+      _meta: { version: TOOL_VERSION },
     },
     async (args) => {
       try {
@@ -136,6 +148,7 @@ export async function startMcpServer(): Promise<void> {
       description:
         'Fetch + parse + summarize an article, with optional tweet-context cross-reference attribution. Returns a structured ArticleSummary with body, summary, keyPoints, and optional crossReferences[]. Handles X Articles (native long-form), external HTML (Substack, Medium, dev.to, GitHub, generic blogs) via 3-tier fetch escalation. Default synthesize=true (opposite of xray_video) — agents can opt out for raw body + cross-references only.',
       inputSchema: ArticleInput,
+      _meta: { version: TOOL_VERSION },
     },
     async (args) => {
       try {
@@ -193,6 +206,7 @@ export async function startMcpServer(): Promise<void> {
       description:
         'Embeds the query locally with MiniLM-L6-v2 and finds the most similar cached items (comments, posts, article passages) by cosine similarity. Searches your local XRay cache only — run `xray cache embed` after `xray thread` to populate the embedding index. Optional `rerank=true` adds a Kyma chat pass to reorder the top candidates (~$0.005). Without rerank: $0.',
       inputSchema: SearchInput,
+      _meta: { version: TOOL_VERSION },
     },
     async (args) => {
       try {
@@ -242,6 +256,7 @@ export async function startMcpServer(): Promise<void> {
       description:
         'Aggregates every cached post + comment authored by the given X handle and synthesizes a ProfileReport via 3 Kyma calls (topics + expertise, stance, notable quotes + summary). Cache-only — populate the cache with `xray thread` on their posts first. 24h cache via `profile_cache`. ~$0.05-0.20 per profile. The `fresh` arg is reserved for P5+ and currently logs a warning + falls back to cache-only.',
       inputSchema: ProfileInput,
+      _meta: { version: TOOL_VERSION },
     },
     async (args) => {
       try {
