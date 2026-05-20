@@ -74,6 +74,26 @@ export async function research(url: string, opts: ResearchOptions = {}): Promise
     if (thread) {
       cacheHit = true;
       logger.debug('thread cache hit', { id: parsed.id });
+      // v1.0.1 — synthesize a minimal coverage record on cache hits.
+      // The cache stores `XThread` only (not the original `ThreadCoverage`
+      // from `fetchThread`), so v1.0.0 dropped `report.coverage` entirely
+      // whenever the thread was served from cache (even though
+      // classification + the report-level fields still ran). We can't
+      // reconstruct the original target/achieved depth + cursor list
+      // without the raw fetch, so this synthesized record is intentionally
+      // conservative — fetchedReplies derives from the cached
+      // `thread.comments.length`, status carries thread.partial, and
+      // classifiedReplies is filled in by the classification step below.
+      coverage = {
+        targetDepth: opts.depth ?? 0,
+        achievedDepth: 0,
+        targetReplies: opts.maxReplies ?? thread.comments.length,
+        fetchedReplies: thread.comments.length,
+        classifiedReplies: 0,
+        paginationCursors: [],
+        status: thread.partial ? 'partial' : 'ok',
+        ...(thread.partial && thread.partialReason ? { failureReason: thread.partialReason } : {}),
+      };
     }
   }
   if (!thread) {
