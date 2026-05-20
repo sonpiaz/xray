@@ -4,6 +4,28 @@ All notable changes to XRay will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-05-19
+
+Patch release that fixes two silent regressions surfaced by the v1.0.0
+launch smoke test on `https://x.com/AnatoliKopadze/status/2056362875195686927`.
+No CLI / MCP schema changes — drop-in upgrade.
+
+### Fixed
+
+- **X Article card extraction was silently broken in v1.0.0.** `xray thread <url> --articles` returned `articleSummaries: undefined` for tweets with an embedded X Article. The parser stashed the raw `tweet.card` blob under `XPost.raw.card` (preserved by `z.unknown()` on construction) but `collectArticleCandidates` only inspected `rootPost.raw`, and downstream code couldn't introspect the shape without re-walking `binding_values`. The candidate collector therefore emitted the silent debug log "articles flag set but no article candidates found on root/author posts" and the article pipeline never ran.
+- **`coverage` field dropped to `undefined` on cache-hit paths.** The cache layer only persisted `XThread` (not `ThreadCoverage`), so every cache-hit run silently lost `report.coverage` even though classification + the report-level fields still ran. The catch-all `xray thread <url> --video --articles --json` smoke test surfaced this as `coverage: null` in the output despite `"classified top 40 of 75 replies"` sitting in `warnings`.
+
+### Added
+
+- **`XPost.card: XArticleCard` typed field.** Structured representation of an X tweet card (`url`, optional `title` / `byline` / `bodyText` / `publishedAt` / `raw`). Backward compatible — absent on tweets without a card. Populated at parse time by `parseTweetCard()`, surfaced to consumers without re-walking `binding_values`.
+- **`parseTweetCard()` parser helper** (`src/fetcher/parser.ts`). Lifts `tweet.card` into a structured `XArticleCard` with URL-precedence fallback (`card.url` → `binding_values[card_url]` → `[url]` → `[article_url]`). Defensive — non-article cards (`summary_large_image`, `video_app`) get a URL + title but no body text.
+- **Article candidate collector extended to scan author posts.** `collectArticleCandidates` now walks both `rootPost` AND `authorPosts` for the card channels (v1.0.0 only walked `rootPost.raw`). Articles dropped into 2/N or 3/N follow-ups are no longer missed.
+- **Structured-card fast path in the article orchestrator.** When `analyze-thread.ts` passes a v1.0.1 `XArticleCard` with pre-extracted `bodyText`, the orchestrator skips `parseXArticle` (which would re-walk `binding_values`) AND skips the standalone Playwright round-trip.
+
+### Tests
+
+- +18 tests covering parser card surfacing on `XPost.card`, `parseTweetCard` URL precedence, non-article card fallback, candidate collector Channel 2 root+author scan with dedup against links, structured-card fast path in the orchestrator, and coverage preservation on cache-hit paths including the `--video --articles` interaction. Total: 703 → **721 passing**.
+
 ## [1.0.0] — 2026-05-19
 
 **XRay v1.0 — first public release.**

@@ -21,7 +21,7 @@ import { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from
 
 export { ArticleInput, ProfileInput, SearchInput, ThreadInput, VideoInput } from './schemas.ts';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 
 /**
  * P5.1 — Per-tool semantic version surfaced via the MCP `_meta` passthrough

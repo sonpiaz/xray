@@ -11,7 +11,7 @@ import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
 import { warmupCommand } from './commands/warmup.ts';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 
 export async function runCli(argv: string[]): Promise<number> {
   const cli = cac('xray');

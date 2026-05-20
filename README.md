@@ -4,9 +4,9 @@
 
 > Watch the 30-second walkthrough: [`docs/DEMO.md`](./docs/DEMO.md) — animated GIF rendered from [`docs/demo.tape`](./docs/demo.tape) (VHS) or [`docs/demo.sh`](./docs/demo.sh) (asciinema).
 
-![version](https://img.shields.io/badge/version-1.0.0-blue)
+![version](https://img.shields.io/badge/version-1.0.1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-702%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-721%20passing-brightgreen)
 ![runtime](https://img.shields.io/badge/runtime-bun%20%E2%89%A5%201.1-black)
 
 XRay turns an X thread (or video, or linked article, or your entire research archive) into a structured, agent-readable report. Ships as a CLI **and** an MCP server, so the same tool drops cleanly into Grok CLI, Claude Code, or your terminal.
