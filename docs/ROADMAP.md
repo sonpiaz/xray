@@ -30,8 +30,9 @@ XRay aims to become the best-in-class tool for **deep research on X**, with a st
 | **2**     | Video Understanding          | Video analysis on X                 | **Shipped**     | v0.3.0-v0.3.1 | Q2 2026 |
 | **3**     | External Content             | Article & link understanding        | **Shipped**     | v0.4.0    | Q3 2026 |
 | **4**     | Advanced Research            | Semantic search & profile analysis  | **Specced**     | v0.5.0    | Q3 2026 |
-| **5**     | Polish & OSS Readiness       | Hardening, docs, MCP, exports       | Planned         | -         | Q1 2027 |
-| **6**     | Launch & Post-Launch         | Public release + iteration          | Planned         | v1.0      | Q1 2027 |
+| **5**     | Polish & OSS Readiness       | Docs, hardening, MCP v1 stamp, warmup, demo | **Specced** | v1.0.0    | Q3 2026 |
+| **6**     | Launch Ceremony              | v1.0 tag + GitHub Release + announcement | Planned     | v1.0.0    | Q3 2026 |
+| **7**     | Advanced Research Cont.      | Narrative + batch + fresh-profile + comparison | Planned | post-v1.0 | Q4 2026 |
 
 Phases 1–3 may run in parallel once Phase 0 is stable.
 
@@ -112,24 +113,34 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 - 3 internal sub-phases: P4.0 embedding infra (~6-8h) -> P4.1 semantic search (~5-7h) -> P4.2 profile analysis + polish (~8-10h)
 - Ships as v0.5.0 (fully additive, no breaking changes from v0.4.0)
 
-## Phase 5 — Narrative Tracking + Batch + Polish & OSS Readiness
-- **Narrative / controversy tracking** — temporal analysis of stance drift, topic evolution across threads (previously in Phase 4 vision, deferred here)
-- **Batch research & comparison** — `xray batch` command for parallel multi-thread/multi-profile processing (previously in Phase 4 vision, deferred here)
-- Advanced caching + rate-limit handling
-- Custom embedding models (BYOM) and API-based embedding providers
-- Profile comparison (A vs B side-by-side analysis)
-- Very large embedding store handling (>100k items)
-- Advanced caching + rate-limit handling
-- Rich export formats (Markdown, JSON, Obsidian)
-- Comprehensive documentation
-- Stable, documented MCP tools
-- Contribution guidelines
+## Phase 5 — Polish & OSS Readiness ([Spec](./PHASE_5_PLAN.md))
+- **Scope: OSS-readiness ONLY.** Zero new features. Deferred research (narrative + batch + fresh-profile) moved to Phase 7.
+- **Principle:** Phase 5 ships nothing new. It makes everything already built v1.0-launchable: documented, hardened, versioned, and demo-ready.
+- README rewrite (tagline, install, quickstart, use-case examples, MCP setup, architecture diagram, contributing link)
+- Community files: CONTRIBUTING.md (dev setup, test, commit convention, PR process, breaking-change protocol, MCP schema versioning, release process), issue templates (bug/feature/security), PR template, CODE_OF_CONDUCT.md
+- Rate-limit hardening: exponential backoff (base 1s, 3 attempts, jitter +/-30%, max 30s) for Kyma API (429, 5xx, network) and X cookie-tier fetching. Clean user-facing error messages.
+- MCP v1 versioning: `_meta: { version: "1.0" }` on all 5 tools. Breaking-change protocol documented in CONTRIBUTING.
+- `xray warmup` command: pre-download MiniLM model + launch/close Playwright. Reports timing per step.
+- v1.0 launch assets: 30-second terminal recording (VHS/asciinema), GIF for README, comparison snippet, CHANGELOG v1.0.0
+- 3 internal sub-phases: P5.0 docs polish (~5-7h) -> P5.1 hardening (~5-7h) -> P5.2 demo + v1.0 release (~5-6h)
+- Ships as v1.0.0 (fully additive, no breaking changes from v0.5.0)
 
-## Phase 6 — Launch
-- v1.0 release
-- GitHub release + announcement
-- Grok CLI integration examples
+## Phase 6 — Launch Ceremony
+- v1.0.0 tag + GitHub Release
+- GitHub release announcement (release notes from CHANGELOG v1.0.0)
+- Grok CLI integration examples in README
 - Community feedback loop
+- ProductHunt / HackerNews / Reddit launch posts (optional, post-ceremony)
+
+## Phase 7 — Advanced Research Continued (post-v1.0)
+- **Narrative / controversy tracking** — temporal analysis of stance drift, topic evolution across threads (deferred from P4/P5)
+- **Batch research & comparison** — `xray batch` command for parallel multi-thread/multi-profile processing (deferred from P4/P5)
+- **`--fresh N` profile fetching** — real X timeline fetcher for live profile data (currently degrades to cache-only)
+- **Profile comparison (A vs B)** — side-by-side analysis of two profiles
+- Custom embedding models (BYOM) and API-based embedding providers
+- Very large embedding store handling (>100k items)
+- New export formats (Obsidian, HTML, PDF)
+- Performance benchmarks
 
 ---
 
@@ -141,9 +152,10 @@ Phases 1–3 may run in parallel once Phase 0 is stable.
 | M1        | End of Phase 0+1+1.5| First usable version (v0.2.0 = P0 + P1 + P1.5 combined) | Done (v0.2.2) |
 | M2        | End of Phase 2      | Multimodal (thread + video) — v0.3.0 | Done (v0.3.1) |
 | M2.5      | End of Phase 3      | Full content understanding (thread + video + articles) — v0.4.0 | Done (v0.4.0) |
-| M3        | End of Phase 4      | Semantic search + profile (scope: search + profile only; narrative + batch deferred to P5) — v0.5.0 | Specced |
-| M4        | End of Phase 5      | Narrative tracking + batch + OSS polish | Planned |
-| M5        | Phase 6             | Public launch                        | Planned |
+| M3        | End of Phase 4      | Semantic search + profile (scope: search + profile only; narrative + batch deferred to P7) — v0.5.0 | Specced |
+| M4        | End of Phase 5      | OSS polish + hardening + docs + demo — v1.0.0 | Specced |
+| M5        | Phase 6             | v1.0 launch ceremony + announcement | Planned |
+| M6        | End of Phase 7      | Narrative + batch + fresh-profile + comparison (post-v1.0) | Planned |
 
 ---
 
