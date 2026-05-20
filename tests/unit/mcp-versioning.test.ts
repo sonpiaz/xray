@@ -8,6 +8,8 @@
  * If the SDK ever drops `_meta` passthrough from `registerTool`, these
  * tests fail and remind us to switch to the `annotations` shim.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -21,6 +23,18 @@ import {
 } from '../../src/mcp/schemas.ts';
 
 const TOOL_VERSION = '1.0';
+
+// P5.2 — read TOOL_VERSION out of the server source file rather than
+// importing src/mcp/server.ts (which transitively pulls in `bun:sqlite`
+// via closeDb and breaks the Vitest/Node loader). Same drift-detection
+// guarantee, no module side effects.
+function readToolVersionFromSource(): string {
+  const serverPath = fileURLToPath(new URL('../../src/mcp/server.ts', import.meta.url));
+  const source = readFileSync(serverPath, 'utf8');
+  const match = source.match(/export const TOOL_VERSION = '([^']+)'/);
+  if (!match) throw new Error('TOOL_VERSION constant not found in src/mcp/server.ts');
+  return match[1] as string;
+}
 
 /**
  * Build a fresh server + client pair pre-wired with all 5 tools — but only
@@ -88,11 +102,12 @@ describe('MCP tool versioning (_meta.version)', () => {
     await client.close();
   });
 
-  it('TOOL_VERSION matches the constant exported from server.ts', async () => {
-    // Import indirectly so we don't run the SIGINT registration in
-    // startMcpServer. We just need the registration call shape to match.
-    // The constant is private — assert by string equality against the
-    // canonical value we expect in P5.1.
+  it('TOOL_VERSION matches the canonical v1.0 string from server.ts', () => {
+    // Parsed out of src/mcp/server.ts (P5.2). Can't import the module
+    // because closeDb transitively loads bun:sqlite which Vitest/Node
+    // can't resolve. Source-string parsing gives us the same drift
+    // detection without the loader penalty.
+    expect(readToolVersionFromSource()).toBe('1.0');
     expect(TOOL_VERSION).toBe('1.0');
   });
 });
