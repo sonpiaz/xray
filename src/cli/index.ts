@@ -9,6 +9,7 @@ import { profileCommand } from './commands/profile.ts';
 import { searchCommand } from './commands/search.ts';
 import { threadCommand } from './commands/thread.ts';
 import { videoCommand } from './commands/video.ts';
+import { warmupCommand } from './commands/warmup.ts';
 
 const VERSION = '0.5.0';
 
@@ -127,6 +128,16 @@ export async function runCli(argv: string[]): Promise<number> {
   cli.command('mcp', 'Start the XRay MCP server (stdio transport)').action(async () => {
     await mcpCommand();
   });
+
+  cli
+    .command(
+      'warmup',
+      'Preheat: download embedding model + launch Playwright + open cache. Eliminates first-run cold-start surprise.',
+    )
+    .option('--json', 'Output JSON instead of human-readable')
+    .action(async (opts: Parameters<typeof warmupCommand>[0]) => {
+      await warmupCommand(opts);
+    });
 
   cli.help();
   cli.version(VERSION);
