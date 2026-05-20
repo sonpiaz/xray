@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `package.json`, CLI, and MCP server version bumped to `0.5.0`.
 
-### Dependencies (new in v0.5.0 — first introduced in P4.0)
-- `@xenova/transformers` (~23 MB MiniLM model downloaded on first use, cached at `~/.xray/models/`).
-- `sqlite-vec` (optional — runtime loadable extension; falls back to pure-JS cosine when not loadable, e.g., on this Bun build).
+### Dependencies
+- `@xenova/transformers` (~23 MB MiniLM model downloaded on first use, cached at `~/.xray/models/`). First introduced in P4.0.
+- `sqlite-vec` (optional — runtime loadable extension; falls back to pure-JS cosine when not loadable, e.g., on this Bun build). First introduced in P4.0.
 
 ### Out of scope (deferred to P5+)
 - Narrative / controversy tracking (temporal stance drift).
@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `package.json`, CLI, and MCP server version bumped to `0.4.0`.
 
-### Dependencies (new)
+### Dependencies
 - `@mozilla/readability` + `linkedom` for HTML article extraction. Both pure JS, no native binaries.
 
 ## [0.3.1] — 2026-05-19
@@ -72,9 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `package.json`, CLI, and MCP server version bumped to `0.3.0`.
 
-### Dependencies (optional)
+### Dependencies
 
-- `yt-dlp` required for external platforms (YouTube, TikTok, Vimeo, LinkedIn). X-native videos work without it. Install: `brew install yt-dlp` or `pipx install yt-dlp`.
+- `yt-dlp` required for external platforms (YouTube, TikTok, Vimeo, LinkedIn) — optional, X-native videos work without it. Install: `brew install yt-dlp` or `pipx install yt-dlp`.
 - `ffmpeg` required for all video features (audio extract + frame extraction).
 
 ## [0.2.2] — 2026-05-19
@@ -131,4 +131,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.1] — 2026-05-18
 
+### Added
 - Initial scaffold — CLI, MCP server, basic thread fetching, SQLite cache.
