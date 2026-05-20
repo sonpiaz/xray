@@ -2,11 +2,11 @@
 
 > Deep research on X (Twitter) for AI agents and humans who want to understand, not just scroll.
 
-<!-- demo.gif lands in v1.0 (P5.2) -->
+> Watch the 30-second walkthrough: [`docs/DEMO.md`](./docs/DEMO.md) — animated GIF rendered from [`docs/demo.tape`](./docs/demo.tape) (VHS) or [`docs/demo.sh`](./docs/demo.sh) (asciinema).
 
-![version](https://img.shields.io/badge/version-0.5.0-blue)
+![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-702%20passing-brightgreen)
 ![runtime](https://img.shields.io/badge/runtime-bun%20%E2%89%A5%201.1-black)
 
 XRay turns an X thread (or video, or linked article, or your entire research archive) into a structured, agent-readable report. Ships as a CLI **and** an MCP server, so the same tool drops cleanly into Grok CLI, Claude Code, or your terminal.
@@ -136,7 +136,7 @@ Every report carries `coverage.tier` (`'cookie' | 'ssr' | 'auth'`) so agents kno
 
 ## Phases shipped
 
-v0.5.0 covers Phase 0–4: thread research, deep conversation, invisible auth, video understanding, external content, semantic search, and profile analysis. Phase 5 (polish + v1.0 launch) is in progress. See [`docs/ROADMAP.md`](./docs/ROADMAP.md) for the full table.
+v1.0.0 covers Phase 0–5: thread research, deep conversation, invisible 3-tier auth, video understanding, external articles + cross-reference, semantic search + profile analysis, and the v1.0 hardening pass (retry + warmup + MCP versioning + community files). See [`docs/ROADMAP.md`](./docs/ROADMAP.md) for the full phase table and [`CHANGELOG.md`](./CHANGELOG.md) for the per-version cuts.
 
 ## Commands
 
