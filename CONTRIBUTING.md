@@ -127,4 +127,4 @@ If you discover a security issue (cookie handling, decrypt path, code execution 
 
 ## Code of Conduct
 
-By participating in this project, you agree to keep interactions respectful, focused on the work, and free of harassment. A formal Contributor Covenant document may be added later; until then, this paragraph stands as the working baseline.
+XRay follows a short, project-specific Code of Conduct — see [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md). By contributing, you agree to its guidelines. Report concerns privately to **sonxpiaz@gmail.com**.
