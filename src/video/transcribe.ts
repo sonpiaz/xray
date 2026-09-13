@@ -9,10 +9,8 @@ import { logger } from '../core/logger.ts';
 import type { Transcript, TranscriptSegment } from '../models/video-report.ts';
 
 /**
- * Kyma audio transcription endpoint (OpenAI Whisper API compatible). The
- * gateway routes `whisper-v3-turbo` to Groq Whisper Large v3 Turbo
- * (~$0.001/min effective, with 1.35x markup baked in). See
- * /Users/sonpiaz/kyma-api/src/routes/multimodal.ts handler around line 569.
+ * Kyma audio transcription endpoint (OpenAI Whisper API compatible).
+ * `whisper-v3-turbo` is Whisper Large v3 Turbo (~$0.001/min effective).
  *
  * verbose_json gives us segment-level timestamps which we surface as
  * TranscriptSegment[]. The Kyma gateway hard-codes verbose_json upstream
@@ -25,7 +23,7 @@ export const DEFAULT_TRANSCRIBE_MODEL = 'whisper-v3-turbo';
 const COST_PER_MINUTE_USD = 0.001;
 
 export type TranscribeOptions = {
-  /** Defaults to whisper-v3-turbo (Groq Whisper-large-v3-turbo). */
+  /** Defaults to whisper-v3-turbo (Whisper Large v3 Turbo). */
   model?: string;
   /** Override Kyma URL base. Defaults to config. */
   kymaUrl?: string;
