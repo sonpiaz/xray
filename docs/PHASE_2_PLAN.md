@@ -268,7 +268,7 @@ response_format: verbose_json
 **Inputs:** `audioPath: string`
 **Outputs:** `{ text: string, segments: TranscriptSegment[], language: string, durationSec: number }`
 **Dependencies:** Kyma API key, Kyma `/v1/audio/transcriptions` endpoint
-**Cost:** ~$0.006/minute (Groq whisper pricing via Kyma). A 10-minute video costs ~$0.06.
+**Cost:** ~$0.006/minute (Whisper transcription pricing on Kyma). A 10-minute video costs ~$0.06.
 **Failure modes:**
 - Kyma API key not set → throw `KymaError` (same as thread analysis)
 - Audio too large (>25MB after downsample) → split and transcribe segments sequentially
@@ -598,7 +598,7 @@ The rationale: XRay is a power tool for researchers and AI agents. Agents cannot
 
 ### 8.3 Cost Reference Table
 
-Approximate per-minute costs based on Kyma pricing (via Groq/Google):
+Approximate per-minute costs based on Kyma pricing:
 
 | Stage | Cost driver | Per-minute estimate | 2-min X video | 10-min YouTube | 30-min lecture |
 |---|---|---|---|---|---|
