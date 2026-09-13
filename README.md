@@ -46,7 +46,7 @@ curl -X POST https://kymaapi.com/v1/auth/register \
 | Synthesis (default) | [`gemini-2.5-flash`](https://kymaapi.com/models/gemini-2.5-flash?utm_source=xray) | `POST https://kymaapi.com/v1/chat/completions` | Thread, article, and video synthesis |
 | Video transcription | [`whisper-v3-turbo`](https://kymaapi.com/models/whisper-v3-turbo?utm_source=xray) | `POST https://kymaapi.com/v1/audio/transcriptions` | Audio from embedded or linked video |
 
-Override either with `--model`. Runs on [Kyma API](https://kymaapi.com?utm_source=xray): chat plus Whisper audio behind one key so agents can research threads and video without juggling backends.
+Override the synthesis model with `--model`. Runs on [Kyma API](https://kymaapi.com?utm_source=xray): chat plus Whisper audio behind one key so agents can research threads and video without juggling backends.
 
 ## Quick Start
 
