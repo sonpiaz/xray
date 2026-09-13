@@ -52,7 +52,7 @@ export type VideoCostBreakdown = z.infer<typeof VideoCostBreakdownSchema>;
 /**
  * Per spec §6.1 — transcript wrapper. `segments` may be empty when the
  * Kyma provider doesn't return word/segment-level timestamps for the
- * selected model (Whisper-turbo via Groq returns segments; other providers
+ * selected model (whisper-v3-turbo returns segments; other models
  * may degrade to plain text). `empty` is true when the audio yielded no
  * recognizable speech (music-only, silence) — frame analysis still runs.
  */
