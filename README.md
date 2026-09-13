@@ -15,9 +15,9 @@ XRay turns an X thread (or video, or linked article, or your entire research arc
 
 - **Structured first.** Every output is typed (Zod) so agents can reliably reason over it. Markdown is a render of the JSON, never the source of truth.
 - **Fetch once, understand many times.** Aggressive local SQLite cache means second runs are free and instant.
-- **Strong-model brain.** Defaults to Kyma API (`gemini-2.5-flash`, 1M context); pluggable per command via `--model`.
+- **Strong-model brain.** Defaults to Kyma API ([`gemini-2.5-flash`](https://kymaapi.com/models/gemini-2.5-flash?utm_source=xray), 1M context); pluggable per command via `--model`.
 - **Agent-native.** One MCP config and Grok / Claude can research threads, videos, articles, and your cache without leaving the chat.
-- **Invisible auth.** No login flow for the common case — XRay silently borrows your browser's X cookies, falls back to logged-out HTML when it has to.
+- **Invisible auth.** No login flow for the common case. XRay silently borrows your browser's X cookies, falls back to logged-out HTML when it has to.
 
 ## Install
 
@@ -40,6 +40,13 @@ curl -X POST https://kymaapi.com/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email": "you@example.com"}'
 ```
+
+| Role | Model | Kyma endpoint | Best for |
+|------|-------|---------------|----------|
+| Synthesis (default) | [`gemini-2.5-flash`](https://kymaapi.com/models/gemini-2.5-flash?utm_source=xray) | `POST https://kymaapi.com/v1/chat/completions` | Thread, article, and video synthesis |
+| Video transcription | [`whisper-v3-turbo`](https://kymaapi.com/models/whisper-v3-turbo?utm_source=xray) | `POST https://kymaapi.com/v1/audio/transcriptions` | Audio from embedded or linked video |
+
+Override either with `--model`. Runs on [Kyma API](https://kymaapi.com?utm_source=xray): chat plus Whisper audio behind one key so agents can research threads and video without juggling backends.
 
 ## Quick Start
 
